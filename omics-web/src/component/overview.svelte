@@ -10,6 +10,7 @@
     export let allLog;
     let violinDiv;
     let donutDiv;
+    let expandedIndex = null;
 
     let groups = ["Overview", "Cluster", "Log"];
     let group = groups[0];
@@ -182,34 +183,46 @@
                 {:else if g === "Cluster"}
                     <div bind:this={donutDiv} class="w-full max-w-full"></div>
                 {:else if allLog}
-                    <div class="table-wrap ">
-                        <table class="table caption-bottom text-xs">
-                            <!-- <caption class="pt-4"
-                                >A list of elements from the periodic table.</caption
-                            > -->
+                    <div class="table-wrap">
+                        <table class="table caption-bottom text-xs w-full">
                             <thead>
                                 <tr>
                                     <th>Barcode</th>
                                     <th>Prev</th>
                                     <th>New</th>
-                                    <th>Comment</th>
-                                    <th>Time</th>
                                 </tr>
                             </thead>
-                            <tbody class="text-sm [&>tr]:hover:preset-tonal-primary">
-                                {#each allLog as row}
-                                    <tr>
+                            <tbody class="[&>tr]:hover:preset-tonal-primary">
+                                {#each allLog as row, i}
+                                    <tr
+                                        class="cursor-pointer"
+                                        on:click={() =>
+                                            (expandedIndex =
+                                                expandedIndex === i ? null : i)}
+                                    >
                                         <td>{row.barcode}</td>
                                         <td>{row.old_cluster}</td>
                                         <td>{row.new_cluster}</td>
-                                        <td>{row.comment}</td>
-                                        <td>{row.updated_at}</td>
                                     </tr>
+                                    {#if expandedIndex === i}
+                                        <tr class="bg-muted/30 text-sm">
+                                            <td colspan="3">
+                                                <div>
+                                                    <strong>Comment:</strong>
+                                                    {row.comment || "-"}
+                                                </div>
+                                                <div>
+                                                    <strong>Time:</strong>
+                                                    {row.updated_at}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {/if}
                                 {/each}
                             </tbody>
                             <tfoot>
                                 <tr>
-                                    <td colspan="4">Total</td>
+                                    <td colspan="2">Total</td>
                                     <td class="text-right">{allLog.length}</td>
                                 </tr>
                             </tfoot>

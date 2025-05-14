@@ -192,10 +192,13 @@
                     <SpotInspection
                         {clickedInfo}
                         {availableClusters}
+                        {baseApi}
+                        {currentSlice}
                         on:clusterUpdate={(e) => handleClusterUpdate(e.detail)}
                     ></SpotInspection>
                 {:else if spatialInfo}
-                    <Overview {spotMetricsData} {clusterColorScale} {allLog}></Overview>
+                    <Overview {spotMetricsData} {clusterColorScale} {allLog}
+                    ></Overview>
                 {/if}
             </div>
         </aside>

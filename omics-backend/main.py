@@ -366,3 +366,27 @@ def get_cluster_log(slice_id: str = Query(...)):
         }
         for r in rows
     ]
+
+
+@app.get("/cluster-log-by-spot")
+def get_cluster_log(slice_id: str = Query(...),barcode: str = Query(...)):
+    query = text("""
+        SELECT barcode, old_cluster, new_cluster, comment, updated_at
+        FROM cluster_log
+        WHERE slice_id = :slice_id AND barcode = :barcode
+        ORDER BY updated_at DESC
+    """)
+
+    with engine.connect() as conn:
+        rows = conn.execute(query, {"slice_id": slice_id, "barcode": barcode}).fetchall()
+
+    return [
+        {
+            "barcode": r[0],
+            "old_cluster": r[1],
+            "new_cluster": r[2],
+            "comment": r[3],
+            "updated_at": r[4].isoformat() if r[4] else None
+        }
+        for r in rows
+    ]

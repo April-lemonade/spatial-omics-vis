@@ -7,6 +7,8 @@
 
     export let clickedInfo;
     export let availableClusters;
+    export let baseApi;
+    export let currentSlice;
 
     const dispatch = createEventDispatcher();
 
@@ -14,10 +16,24 @@
     let clusterEdit = false;
     let comment = ""; // 备注
     let selectedCluster = null; // 新选的 cluster
+    let log;
+    let expandedIndex = null;
 
     $: if (clickedInfo) {
+        group = "BasicInfo";
         clusterEdit = false;
         selectedCluster = clickedInfo.cluster;
+    }
+
+    async function fetchLog(barcode) {
+        const res = await fetch(
+            `${baseApi}/cluster-log-by-spot/?slice_id=${currentSlice}&barcode=${barcode}`,
+        );
+        log = await res.json();
+    }
+
+    $: if (clickedInfo && group === "ChangeLog") {
+        fetchLog(clickedInfo.barcode);
     }
 
     function changeCluster(barcode, value, comment) {
@@ -32,11 +48,15 @@
     }
 </script>
 
-<Tabs bind:value={group} onValueChange={(e) => (group = e.value)}>
+<Tabs
+    bind:value={group}
+    onValueChange={(e) => (group = e.value)}
+    class="w-full overflow-x-auto"
+>
     {#snippet list()}
-        <Tabs.Control value="BasicInfo">Basic Info</Tabs.Control>
-        <Tabs.Control value="GeneExpression">Gene Expression</Tabs.Control>
-        <Tabs.Control value="ChangeLog">Change Log</Tabs.Control>
+        <Tabs.Control value="BasicInfo">Basic</Tabs.Control>
+        <Tabs.Control value="GeneExpression">Gene</Tabs.Control>
+        <Tabs.Control value="ChangeLog">Log</Tabs.Control>
     {/snippet}
     {#snippet content()}
         <Tabs.Panel value="BasicInfo">
@@ -131,6 +151,54 @@
                 </ul>
             {/if}
         </Tabs.Panel>
-        <Tabs.Panel value="ChangeLog"></Tabs.Panel>
+        <Tabs.Panel value="ChangeLog">
+            {#if log}
+                <div class="table-wrap">
+                    <table class="table caption-bottom text-xs w-full">
+                        <thead>
+                            <tr>
+                                <th>Barcode</th>
+                                <th>Prev</th>
+                                <th>New</th>
+                            </tr>
+                        </thead>
+                        <tbody class="[&>tr]:hover:preset-tonal-primary">
+                            {#each log as row, i}
+                                <tr
+                                    class="cursor-pointer"
+                                    on:click={() =>
+                                        (expandedIndex =
+                                            expandedIndex === i ? null : i)}
+                                >
+                                    <td>{row.barcode}</td>
+                                    <td>{row.old_cluster}</td>
+                                    <td>{row.new_cluster}</td>
+                                </tr>
+                                {#if expandedIndex === i}
+                                    <tr class="bg-muted/30 text-sm">
+                                        <td colspan="3">
+                                            <div>
+                                                <strong>Comment:</strong>
+                                                {row.comment || "-"}
+                                            </div>
+                                            <div>
+                                                <strong>Time:</strong>
+                                                {row.updated_at}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                {/if}
+                            {/each}
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="2">Total</td>
+                                <td class="text-right">{log.length}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            {/if}
+        </Tabs.Panel>
     {/snippet}
 </Tabs>
