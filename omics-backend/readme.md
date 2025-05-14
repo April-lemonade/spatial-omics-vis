@@ -47,6 +47,6 @@ data/
 
 ### 🚀 运行 main.py
 ```bash
-python main.py
+fastapi dev main.py
 ```
 接口文档：http://localhost:8000/docs
