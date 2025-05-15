@@ -9,10 +9,6 @@ import squidpy as sq
 import scanpy as sc
 import pandas as pd
 import json
-import tempfile
-import matplotlib.pyplot as plt
-import seaborn as sns
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine
 from sqlalchemy.exc import ProgrammingError, IntegrityError
@@ -23,8 +19,6 @@ from typing import List
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from scipy import stats
 import numpy as np
 from sklearn.model_selection import cross_val_predict
 
@@ -120,9 +114,6 @@ app.mount("/images", StaticFiles(directory="./data/151673/spatial"), name="image
 slice_id = "151673"
 path = f"./data/{slice_id}"
 spatial_dir = os.path.join(path, "spatial")
-# spatial_zip = os.path.join(path, "VISDS000003_spatial.zip")
-# deco_csv = os.path.join(path, "VISDS000003_celltype_deco.csv")
-# DEG_rds = os.path.join(path, "VISDS000003_all_cluster_DEG.rds")
 
 adata = None
 expression_data = None
@@ -427,9 +418,6 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         train_data = all_features[train_mask].copy()
         predict_data = all_features[predict_mask].copy()
         
-        # print(f"训练数据形状: {train_data.shape}, 预测数据形状: {predict_data.shape}")
-        # print(f"预测数据的索引长度: {len(predict_data.index)}")
-        # print(f"预测数据的索引是否唯一: {len(predict_data.index) == len(predict_data.index.unique())}")
         
         # 检查是否有正确筛选出所有选中的barcode
         missing_barcodes = [b for b in selected_barcodes if b not in predict_data.index]
@@ -442,19 +430,14 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         
         # 确保预测数据与选中的barcode一致
         if len(predict_data) != len(selected_barcodes):
-            # print(f"警告: 预测数据长度 ({len(predict_data)}) 与选中barcode数量 ({len(selected_barcodes)}) 不匹配")
             # 可能有barcode不在原始数据中，重新确认实际用于预测的barcode
             selected_barcodes = list(predict_data.index)
-            # print(f"更新后的选中barcode数量: {len(selected_barcodes)}")
         
         # 准备特征和标签
         feature_cols = [col for col in train_data.columns if col != 'cluster']
         X_train = train_data[feature_cols]
         y_train = train_data['cluster']
         X_predict = predict_data[feature_cols]
-        
-        # print(f"训练集形状: {X_train.shape}, 预测集形状: {X_predict.shape}")
-        # print(f"特征列表: {feature_cols}")
         
         # 训练随机森林模型
         print("\n训练随机森林模型...")
@@ -467,9 +450,6 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         grid_search = GridSearchCV(rf, param_grid, cv=5, n_jobs=-1, scoring='balanced_accuracy')
         grid_search.fit(X_train, y_train)
         best_rf = grid_search.best_estimator_
-        
-        # print(f"最佳参数: {grid_search.best_params_}")
-        # print(f"交叉验证最佳得分: {grid_search.best_score_:.4f}")
         
         # 识别最重要的特征
         importances = best_rf.feature_importances_
@@ -486,18 +466,13 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         
         # 获取预测的概率值（所有类别的概率分布）
         prediction_probs = best_rf.predict_proba(X_predict)
-        # print("all prediction_probs",prediction_probs)
-        # print(f"预测概率矩阵形状: {prediction_probs.shape}")
         # 获取每个预测的置信度 (最高概率值)
         confidence_scores = np.max(prediction_probs, axis=1)
-        # print(f"选定barcode数量: {len(selected_barcodes)}, 预测数据形状: {X_predict.shape}, 置信度长度: {len(confidence_scores)}")
         
         # 创建概率分布DataFrame，包含所有类别的概率
         class_names = best_rf.classes_
         prob_cols = [f"prob_{cls}" for cls in class_names]
         probs_df = pd.DataFrame(prediction_probs, columns=prob_cols, index=predict_data.index)
-        # print("all probs_df",probs_df)
-        # print(f"probs_df形状: {probs_df.shape}")
         
         # 创建结果跟踪DataFrame - 确保使用预测数据的索引
         result_index = predict_data.index
@@ -507,8 +482,6 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         cluster_change_df['new_cluster'] = new_clusters
         cluster_change_df['confidence'] = confidence_scores
         
-        # print(f"cluster_change_df形状: {cluster_change_df.shape}")
-        # print(f"cluster_change_df索引长度: {len(cluster_change_df.index)}")
         
         # 将概率分布添加到结果中 - 使用索引合并而不是concat
         for col in probs_df.columns:
@@ -521,7 +494,6 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         
         # 添加p值列 (1 - 置信度可以近似为p值)
         cluster_change_df['p_value'] = 1 - cluster_change_df['confidence']
-        # print("all cluster_change_df", cluster_change_df)
         # 使用交叉验证获得训练集上的置信度分布
         cv_probs = cross_val_predict(best_rf, X_train, y_train, method='predict_proba', cv=5)
         cv_max_probs = np.max(cv_probs, axis=1)
@@ -535,7 +507,6 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
             p_value = (cv_max_probs <= confidence).mean()
             p_values_refined.append(p_value)
         
-        # print(f"p_values_refined长度: {len(p_values_refined)}, cluster_change_df长度: {len(cluster_change_df)}")
         
         # 更新p值
         cluster_change_df['p_value_refined'] = p_values_refined
@@ -748,20 +719,7 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         
         # obs = adata.obs
         obs = adata.uns['change_df']
-        # print(obs)
-        # obs['x'] = obs['x'] * factor  # 如果你已经加载 scalefactors
-        # obs['y'] = obs['y'] * factor
-
-        # traces = []
-        # for cluster_id, group in obs.groupby("predicted_cluster"):
-        #     trace = {
-        #         "name": f"Cluster {cluster_id}",
-        #         "type": "scatter",
-        #         "mode": "markers",
-        #         "customdata": group.index.tolist(),
-        #         "hovertemplate": "Barcode: %{customdata}<extra></extra>",
-        #     }
-        #     traces.append(trace)
+        
         obs_cleaned = obs.replace({np.nan: None, np.inf: None, -np.inf: None})
 
         return obs_cleaned.reset_index().to_dict(orient="records")
