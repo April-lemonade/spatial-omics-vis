@@ -23,12 +23,24 @@ data/
     ├── info.json
     ├── metadata.tsv
     ├── scRNA.h5ad
+    ├── info.json
     └── spatial/
         ├── full_image.tif
         ├── scalefactors_json.json
         ├── tissue_hires_image.png
         ├── tissue_lowres_image.png
         └── tissue_positions_list.csv
+```
+其中，info.json 存储基本信息
+示例
+```json
+{
+  "tissue": "Human DLPFC (dorsolateral prefrontal cortex)",
+  "platform": "10x Genomics Visium",
+  "slice_id": "151673",
+  "spot_diameter_um": 55,
+  "spot_spacing_um": 100
+}
 ```
 ### 数据库配置
 本项目默认使用 MySQL 数据库，连接信息在代码中通过 SQLAlchemy 设置：
