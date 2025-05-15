@@ -7,7 +7,9 @@
     import Plot from "./component/plot.svelte";
     import Overview from "./component/overview.svelte";
     import SpotInspection from "./component/spotInspection.svelte";
-    import { RoomEnvironment } from "three/examples/jsm/Addons.js";
+    // import { RoomEnvironment } from "three/esxamples/jsm/Addons.js";
+    import { ProgressRing } from "@skeletonlabs/skeleton-svelte";
+    import Lassomode from "./component/lassomode.svelte";
 
     const baseApi = "http://localhost:8000";
     const imageUrl = "http://localhost:8000/images/tissue_hires_image.png";
@@ -27,6 +29,8 @@
     let clusterColorScale;
     let allLog;
     let lassoSelected = false;
+    let reclusering = false;
+    let reclustered = false;
 
     async function fetchSpatial() {
         // 先获取所有的切片 ID
@@ -79,10 +83,11 @@
     }
 
     function handleSpotClick(detail) {
-        console.log(detail);
+        // console.log(detail);
         // console.log("选中了一个 spot:", info.barcode, info);
         clickedInfo = detail.info;
         lassoSelected = detail.lassoSelected;
+        console.log(clickedInfo);
     }
 
     async function handleClusterUpdate({
@@ -104,7 +109,7 @@
         });
 
         if (res.ok) {
-            // clusterEdit = false;
+            clusterEdit = false;
 
             // ✅ 成功更新后重新获取并刷新 spatialData
             const updated = await fetch(
@@ -112,19 +117,41 @@
             );
             spatialData = await updated.json();
             clickedInfo.cluster = newCluster;
-            // ✅ 重新绘图（如果是子组件，可以用 event 触发父组件刷新）
-            // Plotly.react(spatialDiv, spatialData, plotInstance.layout);
         }
 
-        // // ✅ 更新 spatialData 中的点
-        // moveBarcodeToCluster(barcode, oldCluster, newCluster);
-        // Plotly.react(spatialDiv, spatialData, plotInstance.layout);
+        //  spatialData 中的点
         console.log({
             barcode,
             newCluster,
             oldCluster,
             comment,
         });
+    }
+
+    async function recluster() {
+        reclusering = true;
+        reclustered = false;
+        const res = await fetch(`${baseApi}/recluster`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                slice_id: currentSlice,
+                barcode: clickedInfo,
+            }),
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            console.log("返回的数据内容：", data);
+            clickedInfo = data;
+            // lassoSelected = false;
+            reclustered = true;
+            // dispatch("spotClick", {
+            //     info: data,
+            //     lassoSelected: true,
+            // });
+            reclusering = false;
+        }
     }
 
     onMount(async () => {
@@ -151,11 +178,27 @@
     });
 </script>
 
+{#if !spatialData}
+    <div
+        class="fixed inset-0 z-50 flex justify-center items-center bg-white/80"
+    >
+        <ProgressRing
+            value={null}
+            size="size-14"
+            meterStroke="stroke-blue-300"
+            trackStroke="stroke-blue-400"
+        />
+    </div>
+{/if}
+
 <div class="grid h-screen grid-rows-[auto_1fr_auto] gap-y-2">
     <!-- Header -->
     <header class="text-xl p-3 bg-gray-200">空转数据可视化demo</header>
     <!-- Grid Column -->
-    <div class="grid grid-cols-1 md:grid-cols-[15%_50%_34%] px-1 gap-x-1">
+    <div
+        class="grid grid-cols-1 md:grid-cols-[15%_50%_34%] px-1 gap-x-1 h-full overflow-hidden
+"
+    >
         <!-- Sidebar (Left) -->
         <aside class="p-4 border-1 border-solid rounded-lg border-stone-300">
             <span class="font-bold">slice:</span>
@@ -192,73 +235,43 @@
                 {imageUrl}
                 {clusterColorScale}
                 {lassoSelected}
-                {baseApi}
-                {currentSlice}
                 on:spotClick={(e) => handleSpotClick(e.detail)}
             ></Plot>
         </main>
         <!-- Sidebar (Right) -->
         <aside
-            class="p-4 border-1 border-solid rounded-lg border-stone-300"
-            style="font-family: sans-serif;"
+            class="p-4 border-1 border-solid rounded-lg border-stone-300 h-full overflow-y-scroll scrollbar-none"
+            style="font-family: sans-serif;scrollbar-width: auto; scrollbar-color: #999 transparent;"
         >
             <!-- <header class="text-xl">Inspection View</header> -->
-            <div>
-                {#if lassoSelected && clickedInfo}
-                    <div class="table-wrap">
-                        <table class="table caption-bottom text-xs w-full">
-                            <thead>
-                                <tr>
-                                    <th>Barcode</th>
-                                    <th>Prev</th>
-                                    <th>New</th>
-                                </tr>
-                            </thead>
-                            <tbody class="[&>tr]:hover:preset-tonal-primary">
-                                {#each clickedInfo as row, i}
-                                    <tr
-                                        class="cursor-pointer {row.original_cluster !==
-                                        row.new_cluster
-                                            ? 'bg-red-100'
-                                            : ''}"
-                                        on:click={() =>
-                                            (expandedIndex =
-                                                expandedIndex === i ? null : i)}
-                                    >
-                                        <td>{row.barcode}</td>
-                                        <td>{row.original_cluster}</td>
-                                        <td>{row.new_cluster}</td>
-                                    </tr>
-                                    {#if expandedIndex === i}
-                                        <tr class="bg-muted/30 text-sm">
-                                            <td colspan="3">
-                                                {#each Object.entries(row) as [key, value], i}
-                                                    {#if i >= 4}
-                                                        <div>{key}:{value}</div>
-                                                    {/if}
-                                                {/each}
-                                                <!-- <div>
-                                                    <strong>Comment:</strong>
-                                                    {row.comment || "-"}
-                                                </div>
-                                                <div>
-                                                    <strong>Time:</strong>
-                                                    {row.updated_at}
-                                                </div> -->
-                                            </td>
-                                        </tr>
-                                    {/if}
-                                {/each}
-                            </tbody>
-                            <tfoot>
-                                <tr>
-                                    <td colspan="2">Total</td>
-                                    <td class="text-right"
-                                        >{clickedInfo.length}</td
-                                    >
-                                </tr>
-                            </tfoot>
-                        </table>
+            <div class="h-full">
+                {#if lassoSelected}
+                    <!-- {#if reclustered && !reclusering}
+                        <Lassomode {clickedInfo}></Lassomode>
+                    {:else if reclusering}
+                        <div
+                            class="fixed inset-0 z-50 flex justify-center items-center bg-white/80"
+                        >
+                            <ProgressRing
+                                value={null}
+                                size="size-14"
+                                meterStroke="stroke-blue-300"
+                                trackStroke="stroke-blue-400"
+                            />
+                        </div>
+                    {:else if clickedInfo}
+                        <div>{clickedInfo?.length} spots selected</div>
+                        <button
+                            type="button"
+                            class="btn preset-filled"
+                            on:click={() => {
+                                recluster();
+                            }}>Recluster</button
+                        >
+                    {/if} -->
+                    <div class="h-full">
+                        <Lassomode {clickedInfo} {baseApi} {currentSlice}
+                        ></Lassomode>
                     </div>
                 {:else if clickedInfo}
                     <!-- {#if clickedInfo} -->
@@ -281,4 +294,14 @@
 </div>
 
 <style>
+    aside::-webkit-scrollbar {
+        width: 8px;
+    }
+    aside::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    aside::-webkit-scrollbar-thumb {
+        background-color: rgba(100, 100, 100, 0.4);
+        border-radius: 4px;
+    }
 </style>

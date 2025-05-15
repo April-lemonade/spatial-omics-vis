@@ -8,8 +8,6 @@
     export let spatialData;
     export let imageUrl;
     export let clusterColorScale;
-    export let baseApi;
-    export let currentSlice;
     let lassoSelected = false;
 
     let clusterEdit = false;
@@ -101,10 +99,10 @@
                 clusterEdit = false;
                 lassoSelected = true;
 
-                dispatch("spotClick", {
-                    info: clickedInfo,
-                    lassoSelected: lassoSelected,
-                });
+                // dispatch("spotClick", {
+                //     info: clickedInfo,
+                //     lassoSelected: lassoSelected,
+                // });
 
                 if (eventData?.points) {
                     const barcodes = eventData.points.map(
@@ -112,24 +110,21 @@
                     );
                     console.log("Selected barcodes:", barcodes);
 
-                    const res = await fetch(`${baseApi}/recluster`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            slice_id: currentSlice,
-                            barcode: barcodes, // 👈 注意这里你应该传 barcodes 而不是未定义的 barcode
-                        }),
+                    plotInstance.data.forEach((_, i) => {
+                        Plotly.restyle(
+                            plotInstance,
+                            {
+                                "selected.marker.opacity": [1],
+                                "unselected.marker.opacity": [0.2], // 👈 你希望的淡化效果
+                            },
+                            [i],
+                        );
                     });
-
-                    if (res.ok) {
-                        console.log("okk");
-                        const data = await res.json(); // 👈 提取响应体 JSON
-                        console.log("返回的数据内容：", data);
-                        dispatch("spotClick", {
-                            info: data,
-                            lassoSelected: true,
-                        });
-                    }
+                    
+                    dispatch("spotClick", {
+                        info: barcodes,
+                        lassoSelected: lassoSelected,
+                    });
                 }
             })();
         });
@@ -186,17 +181,33 @@
                 eventData["xaxis.autorange"] === true &&
                 eventData["yaxis.autorange"] === true
             ) {
+                plotInstance.data.forEach((_, i) => {
+                    Plotly.restyle(
+                        plotInstance,
+                        {
+                            selectedpoints: [null], // null 是关键！不能是 [[]]
+                            "selected.marker.opacity": [1],
+                            "unselected.marker.opacity": [1],
+                        },
+                        [i],
+                    );
+                });
+
+                const lassoPaths = document.querySelectorAll(
+                    ".selectionlayer path",
+                );
+                const lassoCircles = document.querySelectorAll(
+                    ".outline-controllers circle",
+                );
+                lassoPaths.forEach((path) => path.remove());
+                lassoCircles.forEach((circle) => circle.remove());
+
                 clickedInfo = null;
+                lassoSelected = false;
                 dispatch("spotClick", {
-                    info: clickedInfo,
+                    info: null,
                     lassoSelected: false,
                 });
-                const traceCount = plotInstance.data.length;
-                const update = { selectedpoints: null };
-
-                for (let i = 0; i < traceCount; i++) {
-                    Plotly.restyle(plotInstance, update, [i]);
-                }
             }
         });
 

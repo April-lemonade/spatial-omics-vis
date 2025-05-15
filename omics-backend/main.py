@@ -150,7 +150,8 @@ def prepare_data():
     sc.pp.pca(adata_local)
     sc.pp.neighbors(adata_local)
     sc.tl.leiden(adata_local, key_added="leiden")
-
+    
+    adata_local.obs["leiden_original"] = adata_local.obs["leiden"].copy()
     adata = adata_local
     
     insert_initial_clusters(adata, engine, slice_id)
@@ -401,6 +402,7 @@ class selectedBarcodes(BaseModel):
 @app.post("/recluster")
 def get_cluster_log(req: selectedBarcodes,factor = factor):
     # print(req.barcode)
+    global adata
     all_barcodes = adata.obs.index.tolist()
     selected_barcodes = req.barcode
     selected_barcodes = list(selected_barcodes)  # 确保是列表类型
@@ -409,7 +411,7 @@ def get_cluster_log(req: selectedBarcodes,factor = factor):
         all_features = extract_features(adata, use_hvg_only=True, n_pcs=30)
         # print("all_features",all_features)
         # 添加聚类标签
-        all_features['cluster'] = adata.obs['leiden']
+        all_features['cluster'] = adata.obs['leiden_original']
         
         # 分离训练集和预测集
         train_mask = ~all_features.index.isin(selected_barcodes)
