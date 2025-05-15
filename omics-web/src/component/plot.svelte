@@ -8,6 +8,9 @@
     export let spatialData;
     export let imageUrl;
     export let clusterColorScale;
+    export let baseApi;
+    export let currentSlice;
+    let lassoSelected = false;
 
     let clusterEdit = false;
     let availableClusters = [];
@@ -89,31 +92,55 @@
         bindPlotEvents();
     }
 
-    function bindPlotEvents() {
+    async function bindPlotEvents() {
         if (!plotInstance) return;
 
         plotInstance.on("plotly_selected", (eventData) => {
-            clickedInfo = {};
-            clusterEdit = false;
-            if (eventData?.points) {
-                const barcodes = eventData.points.map((pt) => pt.customdata);
-                console.log("Selected barcodes:", barcodes);
-            }
+            (async () => {
+                clickedInfo = null;
+                clusterEdit = false;
+                lassoSelected = true;
 
-            // plotInstance.data.forEach((_, i) => {
-            //     Plotly.restyle(
-            //         plotInstance,
-            //         {
-            //             "selected.marker.opacity": 1,
-            //             "unselected.marker.opacity": 0.2,
-            //         },
-            //         [i],
-            //     );
-            // });
+                dispatch("spotClick", {
+                    info: clickedInfo,
+                    lassoSelected: lassoSelected,
+                });
+
+                if (eventData?.points) {
+                    const barcodes = eventData.points.map(
+                        (pt) => pt.customdata,
+                    );
+                    console.log("Selected barcodes:", barcodes);
+
+                    const res = await fetch(`${baseApi}/recluster`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            slice_id: currentSlice,
+                            barcode: barcodes, // 👈 注意这里你应该传 barcodes 而不是未定义的 barcode
+                        }),
+                    });
+
+                    if (res.ok) {
+                        console.log("okk");
+                        const data = await res.json(); // 👈 提取响应体 JSON
+                        console.log("返回的数据内容：", data);
+                        dispatch("spotClick", {
+                            info: data,
+                            lassoSelected: true,
+                        });
+                    }
+                }
+            })();
         });
 
         plotInstance.on("plotly_deselect", () => {
-            clickedInfo = {};
+            clickedInfo = null;
+            lassoSelected = false;
+            dispatch("spotClick", {
+                info: clickedInfo,
+                lassoSelected: lassoSelected,
+            });
             clusterEdit = false;
             // plotInstance.data.forEach((_, i) => {
             //     Plotly.restyle(
@@ -148,19 +175,28 @@
                 cluster: point.data.name,
             };
 
-            dispatch("spotClick", clickedInfo);
+            dispatch("spotClick", {
+                info: clickedInfo,
+                lassoSelected: lassoSelected,
+            });
         });
 
         plotInstance.on("plotly_relayout", (eventData) => {
-            // resetScale2d 会触发 xaxis.range 和 yaxis.range 的重置
             if (
                 eventData["xaxis.autorange"] === true &&
                 eventData["yaxis.autorange"] === true
             ) {
-                console.log("用户点击了 Reset Axes 按钮");
                 clickedInfo = null;
-                dispatch("spotClick", clickedInfo);
-                // 你可以在这里执行任何逻辑，比如重置选中状态
+                dispatch("spotClick", {
+                    info: clickedInfo,
+                    lassoSelected: false,
+                });
+                const traceCount = plotInstance.data.length;
+                const update = { selectedpoints: null };
+
+                for (let i = 0; i < traceCount; i++) {
+                    Plotly.restyle(plotInstance, update, [i]);
+                }
             }
         });
 

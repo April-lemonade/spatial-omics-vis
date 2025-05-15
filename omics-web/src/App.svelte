@@ -7,14 +7,18 @@
     import Plot from "./component/plot.svelte";
     import Overview from "./component/overview.svelte";
     import SpotInspection from "./component/spotInspection.svelte";
+    import { RoomEnvironment } from "three/examples/jsm/Addons.js";
 
     const baseApi = "http://localhost:8000";
     const imageUrl = "http://localhost:8000/images/tissue_hires_image.png";
+    const clusteringMethods = ["leiden"];
 
+    let currentMethod = clusteringMethods[0];
     let spatialDiv, heatmapDiv;
     let clickedInfo;
     let spatialData;
     let spatialInfo;
+    let expandedIndex = null;
 
     let availableClusters;
 
@@ -22,6 +26,7 @@
     let ncountSpatialData, spotMetricsData;
     let clusterColorScale;
     let allLog;
+    let lassoSelected = false;
 
     async function fetchSpatial() {
         // 先获取所有的切片 ID
@@ -73,9 +78,11 @@
         });
     }
 
-    function handleSpotClick(info) {
+    function handleSpotClick(detail) {
+        console.log(detail);
         // console.log("选中了一个 spot:", info.barcode, info);
-        clickedInfo = info;
+        clickedInfo = detail.info;
+        lassoSelected = detail.lassoSelected;
     }
 
     async function handleClusterUpdate({
@@ -157,6 +164,12 @@
                     <option value={slice}>{slice}</option>
                 {/each}
             </select>
+            <span class="font-bold">clustering method:</span>
+            <select class="select" bind:value={currentMethod}>
+                {#each clusteringMethods as method}
+                    <option value={method}>{method}</option>
+                {/each}
+            </select>
             {#if spatialInfo}
                 {#each Object.entries(spatialInfo) as [key, value]}
                     {#if key !== "expression"}
@@ -178,6 +191,9 @@
                 {spatialData}
                 {imageUrl}
                 {clusterColorScale}
+                {lassoSelected}
+                {baseApi}
+                {currentSlice}
                 on:spotClick={(e) => handleSpotClick(e.detail)}
             ></Plot>
         </main>
@@ -188,7 +204,64 @@
         >
             <!-- <header class="text-xl">Inspection View</header> -->
             <div>
-                {#if clickedInfo}
+                {#if lassoSelected && clickedInfo}
+                    <div class="table-wrap">
+                        <table class="table caption-bottom text-xs w-full">
+                            <thead>
+                                <tr>
+                                    <th>Barcode</th>
+                                    <th>Prev</th>
+                                    <th>New</th>
+                                </tr>
+                            </thead>
+                            <tbody class="[&>tr]:hover:preset-tonal-primary">
+                                {#each clickedInfo as row, i}
+                                    <tr
+                                        class="cursor-pointer {row.original_cluster !==
+                                        row.new_cluster
+                                            ? 'bg-red-100'
+                                            : ''}"
+                                        on:click={() =>
+                                            (expandedIndex =
+                                                expandedIndex === i ? null : i)}
+                                    >
+                                        <td>{row.barcode}</td>
+                                        <td>{row.original_cluster}</td>
+                                        <td>{row.new_cluster}</td>
+                                    </tr>
+                                    {#if expandedIndex === i}
+                                        <tr class="bg-muted/30 text-sm">
+                                            <td colspan="3">
+                                                {#each Object.entries(row) as [key, value], i}
+                                                    {#if i >= 4}
+                                                        <div>{key}:{value}</div>
+                                                    {/if}
+                                                {/each}
+                                                <!-- <div>
+                                                    <strong>Comment:</strong>
+                                                    {row.comment || "-"}
+                                                </div>
+                                                <div>
+                                                    <strong>Time:</strong>
+                                                    {row.updated_at}
+                                                </div> -->
+                                            </td>
+                                        </tr>
+                                    {/if}
+                                {/each}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="2">Total</td>
+                                    <td class="text-right"
+                                        >{clickedInfo.length}</td
+                                    >
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                {:else if clickedInfo}
+                    <!-- {#if clickedInfo} -->
                     <SpotInspection
                         {clickedInfo}
                         {availableClusters}
