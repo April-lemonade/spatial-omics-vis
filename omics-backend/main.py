@@ -199,7 +199,7 @@ def get_plot_data(slice_id: str = Query(...),factor = factor):
         trace = {
             "x": group["x"].tolist(),
             "y": group["y"].tolist(),
-            "name": f"Cluster {cluster_id}",
+            "name": cluster_id,
             "type": "scatter",
             "mode": "markers",
             "customdata": group["barcode"].tolist(),

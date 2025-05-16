@@ -41,8 +41,10 @@
         clusterEdit = false;
         dispatch("clusterUpdate", {
             barcode,
-            newCluster: value,
-            oldCluster: clickedInfo.cluster,
+            newCluster: (value.match(/\d+/) || [value])[0],
+            oldCluster: (clickedInfo.cluster.match(/\d+/) || [
+                clickedInfo.cluster,
+            ])[0],
             comment,
         });
     }
