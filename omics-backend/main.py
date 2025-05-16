@@ -4,6 +4,7 @@ os.environ["NUMBA_THREADING_LAYER"] = "workqueue"
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import squidpy as sq
 import scanpy as sc
@@ -108,7 +109,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/images", StaticFiles(directory="./data/151673/spatial"), name="images")
+# app.mount("/images", StaticFiles(directory="./data/151673/spatial"), name="images")
 
 # 全局路径与缓存
 slice_id = "151673"
@@ -117,6 +118,14 @@ spatial_dir = os.path.join(path, "spatial")
 
 adata = None
 expression_data = None
+
+
+@app.get("/images/{slice_id}/tissue_hires_image.png")
+def get_image(slice_id: str):
+    path = f"./data/{slice_id}/spatial/tissue_hires_image.png"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path, media_type="image/png")
 
 
 def prepare_data():

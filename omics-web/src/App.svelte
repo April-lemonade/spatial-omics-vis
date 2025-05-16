@@ -12,7 +12,7 @@
     import Lassomode from "./component/lassomode.svelte";
 
     const baseApi = "http://localhost:8000";
-    const imageUrl = "http://localhost:8000/images/tissue_hires_image.png";
+    let imageUrl;
     const clusteringMethods = ["leiden"];
 
     let currentMethod = clusteringMethods[0];
@@ -37,6 +37,12 @@
         const slicesRes = await fetch(baseApi + "/allslices");
         allSlices = await slicesRes.json();
         currentSlice = allSlices[0];
+
+        imageUrl = `${baseApi}/images/${currentSlice}/tissue_hires_image.png`;
+
+        const image = new Image();
+        image.src = imageUrl;
+        await new Promise((resolve) => (image.onload = resolve));
 
         // 用当前切片 ID 获取 plot-data 和 slice-info
         const [plotRes, infoRes, ncountRes, metricsRes, logRes] =
@@ -158,9 +164,6 @@
     }
 
     onMount(async () => {
-        const image = new Image();
-        image.src = imageUrl;
-        await new Promise((resolve) => (image.onload = resolve));
         const { ncountData, plotData, sliceInfo, metricsData, logData } =
             await fetchSpatial();
         spatialData = plotData;
