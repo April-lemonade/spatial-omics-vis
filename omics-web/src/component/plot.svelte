@@ -95,6 +95,14 @@
 
         plotInstance.on("plotly_selected", (eventData) => {
             (async () => {
+                const lassoPaths = document.querySelectorAll(
+                    ".selectionlayer path",
+                );
+                const lassoCircles = document.querySelectorAll(
+                    ".outline-controllers circle",
+                );
+                lassoPaths.forEach((path) => path.remove());
+                lassoCircles.forEach((circle) => circle.remove());
                 clickedInfo = null;
                 clusterEdit = false;
                 lassoSelected = true;
@@ -115,12 +123,12 @@
                             plotInstance,
                             {
                                 "selected.marker.opacity": [1],
-                                "unselected.marker.opacity": [0.2], // 👈 你希望的淡化效果
+                                "unselected.marker.opacity": [0.2],
                             },
                             [i],
                         );
                     });
-                    
+
                     dispatch("spotClick", {
                         info: barcodes,
                         lassoSelected: lassoSelected,
@@ -137,6 +145,14 @@
                 lassoSelected: lassoSelected,
             });
             clusterEdit = false;
+            const lassoPaths = document.querySelectorAll(
+                ".selectionlayer path",
+            );
+            const lassoCircles = document.querySelectorAll(
+                ".outline-controllers circle",
+            );
+            lassoPaths.forEach((path) => path.remove());
+            lassoCircles.forEach((circle) => circle.remove());
             // plotInstance.data.forEach((_, i) => {
             //     Plotly.restyle(
             //         plotInstance,
@@ -192,6 +208,8 @@
                         [i],
                     );
                 });
+
+                Plotly.relayout(plotInstance, { dragmode: false });
 
                 const lassoPaths = document.querySelectorAll(
                     ".selectionlayer path",
