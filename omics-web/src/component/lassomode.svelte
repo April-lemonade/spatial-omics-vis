@@ -51,6 +51,12 @@
 
     function acceptRecluster(row) {
         console.log(row);
+        dispatch("acceptRecluster", {
+            barcode: row.barcode,
+            newCluster: row.new_cluster,
+            oldCluster: row.original_cluster,
+            comment: `${currentMethod} Recluster`,
+        });
     }
 </script>
 
@@ -92,7 +98,8 @@
                                     <button
                                         class="btn btn-sm preset-filled"
                                         on:click={(e) => {
-                                            acceptRecluster(e.data);
+                                            e.stopPropagation();
+                                            acceptRecluster(clickedInfo[i]);
                                         }}
                                     >
                                         &check;
@@ -128,6 +135,7 @@
 
             <!-- 聚类方法选择 -->
             <div>
+                <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="font-bold block mb-1">Clustering method:</label>
                 <select class="select w-full" bind:value={currentMethod}>
                     {#each methods as method}

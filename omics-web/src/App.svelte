@@ -109,7 +109,6 @@
         });
 
         if (res.ok) {
-            clusterEdit = false;
 
             // ✅ 成功更新后重新获取并刷新 spatialData
             const updated = await fetch(
@@ -270,7 +269,12 @@
                         >
                     {/if} -->
                     <div class="h-full">
-                        <Lassomode {clickedInfo} {baseApi} {currentSlice}
+                        <Lassomode
+                            {clickedInfo}
+                            {baseApi}
+                            {currentSlice}
+                            on:acceptRecluster={(e) =>
+                                handleClusterUpdate(e.detail)}
                         ></Lassomode>
                     </div>
                 {:else if clickedInfo}
