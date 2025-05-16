@@ -109,22 +109,26 @@
         });
 
         if (res.ok) {
-
             // ✅ 成功更新后重新获取并刷新 spatialData
-            const updated = await fetch(
-                `${baseApi}/plot-data?slice_id=${currentSlice}`,
-            );
-            spatialData = await updated.json();
+            const [updatedPlotRes, updatedLogRes] = await Promise.all([
+                fetch(`${baseApi}/plot-data?slice_id=${currentSlice}`),
+                fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
+            ]);
+
+            spatialData = await updatedPlotRes.json();
+            allLog = await updatedLogRes.json();
+
+            // ✅ 更新当前点击的点的聚类
             clickedInfo.cluster = newCluster;
         }
 
         //  spatialData 中的点
-        console.log({
-            barcode,
-            newCluster,
-            oldCluster,
-            comment,
-        });
+        // console.log({
+        //     barcode,
+        //     newCluster,
+        //     oldCluster,
+        //     comment,
+        // });
     }
 
     async function recluster() {
