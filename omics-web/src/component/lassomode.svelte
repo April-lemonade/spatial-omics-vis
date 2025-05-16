@@ -1,6 +1,7 @@
 <script>
     import { ProgressRing } from "@skeletonlabs/skeleton-svelte";
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, tick } from "svelte";
+    import Plotly from "plotly.js-dist-min";
 
     export let currentSlice;
     export let baseApi;
@@ -9,6 +10,7 @@
     const dispatch = createEventDispatcher();
     const methods = ["RF"];
     let currentMethod = methods[0];
+    let currentRow = null;
 
     let reclustered = false;
     let reclusering = false;
@@ -58,6 +60,53 @@
             comment: `${currentMethod} Recluster`,
         });
     }
+
+    async function drawRadar(row) {
+        await tick();
+
+        const categories = [
+            "prob_0",
+            "prob_1",
+            "prob_2",
+            "prob_3",
+            "prob_4",
+            "prob_5",
+            "prob_6",
+            "prob_7",
+        ];
+        const values = categories.map((k) => currentRow[k] ?? 0);
+
+        const maxValue = Math.max(...values);
+        const paddedMax = Math.min(1, Math.ceil((maxValue + 0.05) * 10) / 10);
+
+        const trace = {
+            type: "scatterpolar",
+            r: values,
+            theta: categories,
+            fill: "toself",
+            name: currentRow.barcode,
+        };
+
+        const layout = {
+            dragmode: false,
+            margin: { t: 20, b: 20, l: 20, r: 20 },
+            polar: {
+                radialaxis: { visible: true, range: [0, paddedMax] },
+            },
+            showlegend: false,
+        };
+
+        Plotly.newPlot("radar-" + currentRow.barcode, [trace], layout, {
+            scrollZoom: true,
+            displaylogo: false,
+            displayModeBar: false,
+            responsive: true,
+        });
+    }
+
+    $: if (currentRow) {
+        drawRadar(currentRow);
+    }
 </script>
 
 <div class="h-full">
@@ -82,19 +131,19 @@
                 <tbody class="[&>tr]:hover:preset-tonal-primary">
                     {#each clickedInfo as row, i}
                         <tr
-                            class="cursor-pointer {row.original_cluster !==
-                            row.new_cluster
+                            class="cursor-pointer {row.changed
                                 ? 'bg-red-100'
                                 : ''}"
-                            on:click={() =>
-                                (expandedIndex =
-                                    expandedIndex === i ? null : i)}
+                            on:click={() => {
+                                expandedIndex = expandedIndex === i ? null : i;
+                                currentRow = row;
+                            }}
                         >
                             <td>{row.barcode}</td>
                             <td>{row.original_cluster}</td>
                             <td>{row.new_cluster}</td>
                             <td class="text-right">
-                                {#if row.original_cluster !== row.new_cluster}
+                                {#if row.changed}
                                     <button
                                         class="btn btn-sm preset-filled"
                                         on:click={(e) => {
@@ -109,12 +158,16 @@
                         </tr>
                         {#if expandedIndex === i}
                             <tr class="bg-muted/30 text-sm">
-                                <td colspan="3">
+                                <td colspan="4">
                                     {#each Object.entries(row) as [key, value], i}
-                                        {#if i >= 4}
+                                        {#if ["p_value", "p_value_refined", "prob_diff"].includes(key)}
                                             <div>{key}:{value}</div>
                                         {/if}
                                     {/each}
+                                    <div
+                                        id={"radar-" + row.barcode}
+                                        class="w-full h-64"
+                                    ></div>
                                 </td>
                             </tr>
                         {/if}

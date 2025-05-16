@@ -107,11 +107,6 @@
                 clusterEdit = false;
                 lassoSelected = true;
 
-                // dispatch("spotClick", {
-                //     info: clickedInfo,
-                //     lassoSelected: lassoSelected,
-                // });
-
                 if (eventData?.points) {
                     const barcodes = eventData.points.map(
                         (pt) => pt.customdata,
@@ -153,25 +148,10 @@
             );
             lassoPaths.forEach((path) => path.remove());
             lassoCircles.forEach((circle) => circle.remove());
-            // plotInstance.data.forEach((_, i) => {
-            //     Plotly.restyle(
-            //         plotInstance,
-            //         {
-            //             "selected.marker.opacity": 1,
-            //             "unselected.marker.opacity": 1,
-            //         },
-            //         [i],
-            //     );
-            // });
         });
 
         plotInstance.on("plotly_click", async (eventData) => {
             const mode = plotInstance._fullLayout.dragmode;
-            // if(mode==)
-            // if (mode === "lasso" || mode === "select") {
-            //     // 禁用点击行为（正在套索模式中）
-            //     return;
-            // }
             clusterEdit = false;
 
             const point = eventData.points[0];
@@ -227,10 +207,6 @@
                     lassoSelected: false,
                 });
             }
-        });
-
-        window.addEventListener("resize", () => {
-            Plotly.Plots.resize(plotInstance);
         });
     }
 </script>
