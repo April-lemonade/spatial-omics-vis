@@ -126,6 +126,10 @@
 
             // ✅ 更新当前点击的点的聚类
             clickedInfo.cluster = newCluster;
+            if (lassoSelected) {
+                lassoSelected = false;
+                clickedInfo = null;
+            }
         }
 
         //  spatialData 中的点
