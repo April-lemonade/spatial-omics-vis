@@ -146,8 +146,12 @@
             const lassoCircles = document.querySelectorAll(
                 ".outline-controllers circle",
             );
+            const lassoRects = document.querySelectorAll(
+                ".outline-controllers rect",
+            );
             lassoPaths.forEach((path) => path.remove());
             lassoCircles.forEach((circle) => circle.remove());
+            lassoRects.forEach((rect) => rect.remove());
         });
 
         plotInstance.on("plotly_click", async (eventData) => {
@@ -197,8 +201,13 @@
                 const lassoCircles = document.querySelectorAll(
                     ".outline-controllers circle",
                 );
+                const lassoRects = document.querySelectorAll(
+                    ".outline-controllers rect",
+                );
+
                 lassoPaths.forEach((path) => path.remove());
                 lassoCircles.forEach((circle) => circle.remove());
+                lassoRects.forEach((rect) => rect.remove());
 
                 clickedInfo = null;
                 lassoSelected = false;
