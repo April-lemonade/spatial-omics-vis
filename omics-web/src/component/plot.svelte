@@ -70,6 +70,7 @@
                 ...trace.marker,
                 color: clusterColorScale(trace.name), // 👈 明确指定颜色
             },
+            name: `Cluster ${trace.name}`,
             selected: { marker: { opacity: 1 } },
             unselected: { marker: { opacity: 0.2 } },
         }));

@@ -182,9 +182,16 @@
             clusters.add(trace.name);
         });
         availableClusters = Array.from(clusters);
+        const clusterNames = availableClusters.sort((a, b) => {
+            return +a.replace("Cluster ", "") - +b.replace("Cluster ", "");
+        });
         clusterColorScale = d3
-            .scaleOrdinal(d3.schemeTableau10)
-            .domain(availableClusters);
+            .scaleOrdinal()
+            .domain(clusterNames)
+            .range(d3.schemeTableau10);
+        // clusterColorScale = d3
+        //     .scaleOrdinal(d3.schemeTableau10)
+        //     .domain(availableClusters);
     });
 </script>
 
@@ -298,7 +305,12 @@
                         on:clusterUpdate={(e) => handleClusterUpdate(e.detail)}
                     ></SpotInspection>
                 {:else if spatialInfo}
-                    <Overview {spotMetricsData} {clusterColorScale} {allLog}
+                    <Overview
+                        {spotMetricsData}
+                        {clusterColorScale}
+                        {allLog}
+                        {currentSlice}
+                        {baseApi}
                     ></Overview>
                 {/if}
             </div>

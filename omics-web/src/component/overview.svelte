@@ -8,8 +8,11 @@
     export let spotMetricsData;
     export let clusterColorScale;
     export let allLog;
+    export let currentSlice;
+    export let baseApi;
     let violinDiv;
     let donutDiv;
+    let umapDiv;
     let expandedIndex = null;
 
     let groups = ["Overview", "Cluster", "Log"];
@@ -23,9 +26,10 @@
     ];
 
     // 每次切换 tab 到 Overview 且数据存在时画图
-    $: if (group === "Overview" && spotMetricsData && violinDiv) {
+    $: if (group === "Overview" && spotMetricsData && violinDiv && umapDiv) {
         tick().then(() => {
             drawFacetViolins(spotMetricsData);
+            drawUMAP();
             // drawDonut(spotMetricsData);
         });
     }
@@ -166,6 +170,52 @@
             Plotly.Plots.resize(donut);
         });
     }
+
+    async function drawUMAP() {
+        const response = await fetch(
+            baseApi + `/umap-coordinates?slice_id=${currentSlice}`,
+        );
+
+        const data = await response.json();
+
+        const layout = {
+            margin: { l: 0, r: 0, t: 0, b: 0 },
+            showlegend: false,
+            autosize: true,
+            width: umapDiv.clientWidth,
+        };
+
+        const grouped = Array.from(d3.group(data, (d) => d.cluster));
+
+        const sortedGrouped = grouped.sort((a, b) => +a[0] - +b[0]);
+
+        const traces = sortedGrouped.map(([cluster, points]) => ({
+            x: points.map((d) => d.UMAP_1),
+            y: points.map((d) => d.UMAP_2),
+            text: points.map((d) => d.barcode),
+            name: `Cluster ${cluster}`,
+            type: "scatter",
+            mode: "markers",
+            marker: {
+                color: clusterColorScale(cluster),
+                size: 4,
+            },
+            hovertemplate: "Barcode: %{text}<extra></extra>",
+        }));
+
+        // console.log(data);
+
+        let umap = await Plotly.newPlot(umapDiv, traces, layout, {
+            responsive: true,
+            useResizeHandler: true,
+            displaylogo: false,
+            modeBarButtons: [[]],
+        });
+
+        window.addEventListener("resize", () => {
+            Plotly.Plots.resize(umap);
+        });
+    }
 </script>
 
 <Tabs bind:value={group} onValueChange={(e) => (group = e.value)}>
@@ -179,6 +229,7 @@
         {#each groups as g}
             <Tabs.Panel value={g}>
                 {#if g === "Overview"}
+                    <div bind:this={umapDiv}></div>
                     <div bind:this={violinDiv}></div>
                 {:else if g === "Cluster"}
                     <div bind:this={donutDiv} class="w-full max-w-full"></div>
@@ -228,13 +279,6 @@
                             </tfoot>
                         </table>
                     </div>
-                    <!-- {#each allLog as l}
-                        {#each Object.entries(l) as [key, value]}
-                            <li>
-                                {key}: {value}
-                            </li>
-                        {/each}
-                    {/each} -->
                 {/if}
             </Tabs.Panel>
         {/each}

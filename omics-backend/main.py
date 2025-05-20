@@ -811,3 +811,31 @@ def extract_features(adata, barcodes=None, use_hvg_only=True, n_pcs=20):
     print(f"最终特征矩阵形状: {features.shape}")
     return features
 
+@app.get("/umap-coordinates")
+def get_umap_coordinates(slice_id: str = Query(...)):
+    global adata
+
+    if "X_umap" not in adata.obsm:
+        sc.pp.normalize_total(adata)
+        sc.pp.log1p(adata)
+        sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=2000)
+        adata = adata[:, adata.var.highly_variable]
+        sc.pp.pca(adata)
+        sc.pp.neighbors(adata)
+        sc.tl.umap(adata)
+
+    
+    df = pd.DataFrame(
+        adata.obsm["X_umap"],
+        index=adata.obs_names,  
+        columns=["UMAP_1", "UMAP_2"]
+    )
+
+    df["barcode"] = df.index
+    df["cluster"] = adata.obs.loc[df.index, "leiden"].astype(str)
+
+    
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df.dropna(subset=["UMAP_1", "UMAP_2"], inplace=True)
+
+    return df.reset_index(drop=True).to_dict(orient="records")
