@@ -30,7 +30,11 @@
     }
 
     // 监听 spatialData 一旦加载，开始绘图
-    $: if (spatialData && image) {
+    // $: if (spatialData && image) {
+    //     drawPlot();
+    // }
+
+    $: if (spatialData && !plotInstance) {
         drawPlot();
     }
 
@@ -39,6 +43,7 @@
     }
 
     async function drawPlot() {
+        image = await loadImage(imageUrl);
         const layout = {
             title: "Spatial Clusters",
             xaxis: { visible: false },
@@ -234,9 +239,14 @@
                     info: null,
                     lassoSelected: false,
                 });
-                const hoverInfo = {
+                let hoverInfo = {
                     barcode: -1,
                     from: "spotPlot",
+                };
+                dispatch("hover", hoverInfo);
+                hoverInfo = {
+                    barcode: -1,
+                    from: "umap",
                 };
                 dispatch("hover", hoverInfo);
             }
@@ -245,26 +255,82 @@
         plotInstance.on("plotly_hover", (eventData) => {
             const point = eventData.points?.[0];
             if (point) {
-                const hoverInfo = {
+                const traceName = point.data.name; // "Cluster 0"
+
+                const legendTexts = spatialDiv.querySelectorAll(".legendtext");
+
+                legendTexts.forEach((textEl) => {
+                    const label = textEl?.textContent?.trim();
+                    if (label === traceName) {
+                        textEl.style.fontWeight = "bold";
+                        textEl.style.fill = "black";
+                        textEl.parentNode.style.opacity = "1";
+                    } else {
+                        textEl.style.fontWeight = "normal";
+                        textEl.style.fill = "#aaa";
+                        textEl.parentNode.style.opacity = "0.3";
+                    }
+                });
+
+                dispatch("hover", {
                     barcode: point.customdata,
                     from: "spotPlot",
-                };
-                dispatch("hover", hoverInfo);
+                });
             }
         });
 
         plotInstance.on("plotly_unhover", () => {
-            const hoverInfo = {
+            const legendTexts = spatialDiv.querySelectorAll(".legendtext");
+            legendTexts.forEach((textEl) => {
+                textEl.style.fontWeight = "normal";
+                textEl.style.fill = "#444";
+                textEl.parentNode.style.opacity = "1";
+            });
+
+            dispatch("hover", {
                 barcode: -1,
                 from: "spotPlot",
-            };
-            dispatch("hover", hoverInfo);
+            });
         });
     }
 
-    onMount(async () => {
-        image = await loadImage(imageUrl);
-    });
+    $: if (hoveredBarcode?.from === "umap") {
+        const hovered = hoveredBarcode.barcode;
+
+        const legendGroups = spatialDiv?.querySelectorAll(".traces") || [];
+
+        if (!hovered || hovered === -1) {
+            legendGroups.forEach((group) => {
+                const textEl = group.querySelector(".legendtext");
+                const pointEl = group.querySelector(".legendpoints path");
+
+                textEl.style.fontWeight = "normal";
+                textEl.style.fill = "#444";
+                group.style.opacity = "1";
+                if (pointEl) pointEl.style.opacity = "1";
+            });
+        } else if (plotInstance) {
+            const match = plotInstance.data.find((trace) =>
+                (trace.customdata || trace.text || []).includes(hovered),
+            );
+            if (match) {
+                const traceName = match.name;
+
+                legendGroups.forEach((group) => {
+                    const textEl = group.querySelector(".legendtext");
+                    const pointEl = group.querySelector(".legendpoints path");
+
+                    const label = textEl?.textContent?.trim();
+                    const isMatch = label === traceName;
+
+                    textEl.style.fontWeight = isMatch ? "bold" : "normal";
+                    textEl.style.fill = isMatch ? "black" : "#aaa";
+                    group.style.opacity = isMatch ? "1" : "0.3";
+                    if (pointEl) pointEl.style.opacity = isMatch ? "1" : "0.3";
+                });
+            }
+        }
+    }
 </script>
 
 <div class="h-full" bind:this={spatialDiv}></div>
