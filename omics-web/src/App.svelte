@@ -31,6 +31,7 @@
     let lassoSelected = false;
     let reclusering = false;
     let reclustered = false;
+    let hoveredBarcode = { barcode: "", from: "" };
 
     async function fetchSpatial() {
         // 先获取所有的切片 ID
@@ -252,7 +253,15 @@
                 {imageUrl}
                 {clusterColorScale}
                 {lassoSelected}
+                {hoveredBarcode}
                 on:spotClick={(e) => handleSpotClick(e.detail)}
+                on:hover={(e) => {
+                    hoveredBarcode = {
+                        barcode: e.detail.barcode,
+                        from: e.detail.from,
+                    };
+                    // console.log(hoveredBarcode);
+                }}
             ></Plot>
         </main>
         <!-- Sidebar (Right) -->
@@ -311,6 +320,14 @@
                         {allLog}
                         {currentSlice}
                         {baseApi}
+                        {hoveredBarcode}
+                        on:hover={(e) => {
+                            hoveredBarcode = {
+                                barcode: e.detail.barcode,
+                                from: e.detail.from,
+                            };
+                            console.log(hoveredBarcode);
+                        }}
                     ></Overview>
                 {/if}
             </div>

@@ -1,6 +1,7 @@
 <script>
+    import { createEventDispatcher, onMount, tick } from "svelte";
     import Plotly from "plotly.js-dist-min";
-    import { tick } from "svelte";
+
     import * as d3 from "d3";
     import { Tabs } from "@skeletonlabs/skeleton-svelte";
     import { all } from "three/tsl";
@@ -10,10 +11,16 @@
     export let allLog;
     export let currentSlice;
     export let baseApi;
+    export let hoveredBarcode;
+
+    const dispatch = createEventDispatcher();
+
     let violinDiv;
     let donutDiv;
     let umapDiv;
     let expandedIndex = null;
+    let umap;
+    let umapData;
 
     let groups = ["Overview", "Cluster", "Log"];
     let group = groups[0];
@@ -26,12 +33,22 @@
     ];
 
     // 每次切换 tab 到 Overview 且数据存在时画图
-    $: if (group === "Overview" && spotMetricsData && violinDiv && umapDiv) {
+    $: if (
+        group === "Overview" &&
+        spotMetricsData &&
+        violinDiv &&
+        umapDiv &&
+        umapData
+    ) {
         tick().then(() => {
             drawFacetViolins(spotMetricsData);
             drawUMAP();
-            // drawDonut(spotMetricsData);
         });
+    }
+
+    $: if (hoveredBarcode.from === "spotPlot" && umapData) {
+        // console.log(hoveredBarcode);
+        drawUMAP();
     }
 
     $: if (group === "Cluster" && spotMetricsData && donutDiv) {
@@ -171,13 +188,16 @@
         });
     }
 
-    async function drawUMAP() {
+    async function fecthUmapData() {
         const response = await fetch(
             baseApi + `/umap-coordinates?slice_id=${currentSlice}`,
         );
 
         const data = await response.json();
+        return data;
+    }
 
+    async function drawUMAP() {
         const layout = {
             margin: { l: 0, r: 0, t: 0, b: 0 },
             showlegend: false,
@@ -185,27 +205,48 @@
             width: umapDiv.clientWidth,
         };
 
-        const grouped = Array.from(d3.group(data, (d) => d.cluster));
+        const grouped = Array.from(d3.group(umapData, (d) => d.cluster));
 
         const sortedGrouped = grouped.sort((a, b) => +a[0] - +b[0]);
+        const traces = sortedGrouped.map(([cluster, points]) => {
+            const barcodes = points.map((d) => d.barcode);
+            const hoveredIndex = barcodes.indexOf(
+                hoveredBarcode?.barcode ?? "",
+            );
 
-        const traces = sortedGrouped.map(([cluster, points]) => ({
-            x: points.map((d) => d.UMAP_1),
-            y: points.map((d) => d.UMAP_2),
-            text: points.map((d) => d.barcode),
-            name: `Cluster ${cluster}`,
-            type: "scatter",
-            mode: "markers",
-            marker: {
-                color: clusterColorScale(cluster),
-                size: 4,
-            },
-            hovertemplate: "Barcode: %{text}<extra></extra>",
-        }));
+            // console.log(hoveredIndex);
+
+            const isHovering =
+                hoveredBarcode?.barcode &&
+                hoveredBarcode?.barcode !== "" &&
+                hoveredBarcode?.barcode !== -1;
+
+            return {
+                x: points.map((d) => d.UMAP_1),
+                y: points.map((d) => d.UMAP_2),
+                text: barcodes,
+                name: `Cluster ${cluster}`,
+                type: "scatter",
+                mode: "markers",
+                marker: {
+                    color: clusterColorScale(cluster),
+                    size: 4,
+                    opacity: isHovering ? 0.1 : 1,
+                },
+                selectedpoints: !isHovering
+                    ? null
+                    : hoveredIndex !== -1
+                      ? [hoveredIndex]
+                      : [],
+                selected: { marker: { opacity: 1 } },
+                unselected: { marker: { opacity: 0.1 } },
+                hovertemplate: "Barcode: %{text}<extra></extra>",
+            };
+        });
 
         // console.log(data);
 
-        let umap = await Plotly.newPlot(umapDiv, traces, layout, {
+        umap = await Plotly.newPlot(umapDiv, traces, layout, {
             responsive: true,
             useResizeHandler: true,
             displaylogo: false,
@@ -215,7 +256,30 @@
         window.addEventListener("resize", () => {
             Plotly.Plots.resize(umap);
         });
+
+        umap.on("plotly_hover", (eventData) => {
+            const point = eventData.points?.[0];
+            if (point) {
+                const hoverInfo = {
+                    barcode: point.text,
+                    from: "umap",
+                };
+                dispatch("hover", hoverInfo);
+            }
+        });
+
+        umap.on("plotly_unhover", () => {
+            const hoverInfo = {
+                barcode: -1,
+                from: "umap",
+            };
+            dispatch("hover", hoverInfo);
+        });
     }
+
+    onMount(async () => {
+        umapData = await fecthUmapData();
+    });
 </script>
 
 <Tabs bind:value={group} onValueChange={(e) => (group = e.value)}>

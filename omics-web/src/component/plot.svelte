@@ -1,5 +1,5 @@
 <script>
-    import { createEventDispatcher, onMount } from "svelte";
+    import { createEventDispatcher, onMount, tick } from "svelte";
     import Plotly from "plotly.js-dist-min";
     import * as d3 from "d3";
 
@@ -8,6 +8,7 @@
     export let spatialData;
     export let imageUrl;
     export let clusterColorScale;
+    export let hoveredBarcode;
     let lassoSelected = false;
 
     let clusterEdit = false;
@@ -29,13 +30,15 @@
     }
 
     // 监听 spatialData 一旦加载，开始绘图
-    $: if (spatialData && imageUrl) {
+    $: if (spatialData && image) {
+        drawPlot();
+    }
+
+    $: if (hoveredBarcode.from === "umap") {
         drawPlot();
     }
 
     async function drawPlot() {
-        image = await loadImage(imageUrl);
-
         const layout = {
             title: "Spatial Clusters",
             xaxis: { visible: false },
@@ -64,16 +67,31 @@
             ],
         };
 
-        const traces = spatialData.map((trace) => ({
-            ...trace,
-            marker: {
-                ...trace.marker,
-                color: clusterColorScale(trace.name), // 👈 明确指定颜色
-            },
-            name: `Cluster ${trace.name}`,
-            selected: { marker: { opacity: 1 } },
-            unselected: { marker: { opacity: 0.2 } },
-        }));
+        const traces = spatialData.map((trace) => {
+            const barcodes = trace.customdata || trace.text || [];
+            const hoveredIndex = barcodes.indexOf(
+                hoveredBarcode?.barcode ?? "",
+            );
+
+            const isHovering =
+                hoveredBarcode?.barcode &&
+                hoveredBarcode?.barcode !== "" &&
+                hoveredBarcode?.barcode !== -1;
+
+            return {
+                ...trace,
+                marker: {
+                    ...trace.marker,
+                    color: clusterColorScale(trace.name),
+                    opacity: isHovering ? 0.2 : 1, // 非高亮点透明
+                },
+                name: `Cluster ${trace.name}`,
+                selectedpoints:
+                    isHovering && hoveredIndex !== -1 ? [hoveredIndex] : null,
+                selected: { marker: { opacity: 1 } },
+                unselected: { marker: { opacity: 0.2 } },
+            };
+        });
 
         const clusterSet = new Set();
         spatialData.forEach((trace) => clusterSet.add(trace.name));
@@ -186,7 +204,7 @@
                     Plotly.restyle(
                         plotInstance,
                         {
-                            selectedpoints: [null], // null 是关键！不能是 [[]]
+                            selectedpoints: [null],
                             "selected.marker.opacity": [1],
                             "unselected.marker.opacity": [1],
                         },
@@ -216,9 +234,37 @@
                     info: null,
                     lassoSelected: false,
                 });
+                const hoverInfo = {
+                    barcode: -1,
+                    from: "spotPlot",
+                };
+                dispatch("hover", hoverInfo);
             }
         });
+
+        plotInstance.on("plotly_hover", (eventData) => {
+            const point = eventData.points?.[0];
+            if (point) {
+                const hoverInfo = {
+                    barcode: point.customdata,
+                    from: "spotPlot",
+                };
+                dispatch("hover", hoverInfo);
+            }
+        });
+
+        plotInstance.on("plotly_unhover", () => {
+            const hoverInfo = {
+                barcode: -1,
+                from: "spotPlot",
+            };
+            dispatch("hover", hoverInfo);
+        });
     }
+
+    onMount(async () => {
+        image = await loadImage(imageUrl);
+    });
 </script>
 
 <div class="h-full" bind:this={spatialDiv}></div>
