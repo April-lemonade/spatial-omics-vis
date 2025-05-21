@@ -11,21 +11,31 @@ import scanpy as sc
 import pandas as pd
 import json
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine
+from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine, insert, text
 from sqlalchemy.exc import ProgrammingError, IntegrityError
-from sqlalchemy import insert, text
 from rpy2.robjects import pandas2ri
 import re
-from typing import List
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 from sklearn.model_selection import cross_val_predict
+import gseapy as gp
+from typing import Optional, List
+from dotenv import load_dotenv
+
+load_dotenv()
+
+user = os.getenv("DB_USER")
+password = os.getenv("DB_PASSWORD")
+host = os.getenv("DB_HOST")
+db = os.getenv("DB_NAME")
+
 
 
 # 建立连接
-engine = create_engine("mysql+pymysql://root:@localhost/omics_data", echo=True)
+# engine = create_engine("mysql+pymysql://root:@localhost/omics_data", echo=True)
+engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}/{db}", echo=True)
 metadata = MetaData()
 
 pandas2ri.activate()
@@ -38,29 +48,32 @@ def insert_initial_clusters(adata, engine, slice_id):
     spot_cluster = metadata.tables[table_name]
 
     with engine.connect() as conn:
+        # 1. 检查是否已有数据
+        result = conn.execute(spot_cluster.select().limit(1)).fetchone()
+        if result is not None:
+            print(f"Table {table_name} already has data. Skipping insertion.")
+            return  # ✅ 跳过插入
+        
+        # 2. 否则插入
         for i, (barcode, row) in enumerate(adata.obs.iterrows()):
-            # print(adata.obs)
             n_count = float(row["nCount_Spatial"]) if "nCount_Spatial" in row else None
             cluster = str(row["leiden"])
             n_feature = float(row.get("nFeature_Spatial", None))
             percent_mito = float(row.get("pct_counts_mt", None))
             percent_ribo = float(row.get("pct_counts_ribo", None))
             x, y = map(float, adata.obsm["spatial"][i])
-            try:
-                conn.execute(
-                    insert(spot_cluster).values(
-                        barcode=barcode,
-                        cluster=cluster,
-                        x=x,
-                        y=y,
-                        n_count_spatial=n_count,
-                        n_feature_spatial=n_feature,
-                        percent_mito=percent_mito,
-                        percent_ribo=percent_ribo,
-                    )
+            conn.execute(
+                insert(spot_cluster).values(
+                    barcode=barcode,
+                    cluster=cluster,
+                    x=x,
+                    y=y,
+                    n_count_spatial=n_count,
+                    n_feature_spatial=n_feature,
+                    percent_mito=percent_mito,
+                    percent_ribo=percent_ribo,
                 )
-            except IntegrityError:
-                continue
+            )
         conn.commit()
 
 
@@ -187,7 +200,8 @@ scale_key = "tissue_hires_scalef" if scale == "hires" else "tissue_lowres_scalef
 factor = sf[scale_key]
     
 @app.get("/plot-data")
-def get_plot_data(slice_id: str = Query(...),factor = factor):
+def get_plot_data(slice_id: str = Query(...)):
+    global factor
     # 从数据库读取 cluster 和坐标信息
     table_name = f"spot_cluster_{slice_id}"
     query = text(f"SELECT barcode, cluster, x, y FROM `{table_name}`")
@@ -839,3 +853,44 @@ def get_umap_coordinates(slice_id: str = Query(...)):
     df.dropna(subset=["UMAP_1", "UMAP_2"], inplace=True)
 
     return df.reset_index(drop=True).to_dict(orient="records")
+
+class EnrichmentRequest(BaseModel):
+    organism: Optional[str] = "Human"
+    gene_sets: Optional[List[str]] = ["GO_Biological_Process_2021"]
+    cutoff: Optional[float] = 0.05
+
+@app.post("/hvg-enrichment")
+def hvg_enrichment(request: EnrichmentRequest):
+    if "highly_variable" not in adata.var:
+        return {"error": "Highly variable genes not computed."}
+
+    hvg_genes = adata.var_names[adata.var["highly_variable"]].tolist()
+    if not hvg_genes:
+        return {"error": "No highly variable genes found."}
+
+    all_results = []
+
+    for gene_set in request.gene_sets:
+        try:
+            enr = gp.enrichr(
+                gene_list=hvg_genes,
+                gene_sets=gene_set,
+                organism=request.organism,
+                outdir=None,
+                cutoff=request.cutoff
+            )
+            df = enr.results.copy()
+            df["Gene_set"] = gene_set  # 添加来源标记
+            all_results.append(df)
+        except Exception as e:
+            continue  # 可以选择记录或跳过失败的 gene_set
+
+    if not all_results:
+        return {"error": "No enrichment results."}
+
+    merged_df = pd.concat(all_results).sort_values("Adjusted P-value")
+    top_results = merged_df.head(40).to_dict(orient="records")
+
+    return {"results": top_results}
+    
+    
