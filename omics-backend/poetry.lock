@@ -1606,6 +1606,65 @@ docs = ["Sphinx", "furo"]
 test = ["objgraph", "psutil"]
 
 [[package]]
+name = "gseapy"
+version = "1.1.8"
+description = "Gene Set Enrichment Analysis in Python"
+optional = false
+python-versions = ">=3.7"
+groups = ["main"]
+files = [
+    {file = "gseapy-1.1.8-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:48c128df10325a447d04f58a4fa3d03c15d30a533d8f1102f8877a266fafb87d"},
+    {file = "gseapy-1.1.8-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:dcfc0cfe21a71be18fa7e5167302febd0db357b8ff0140647b6438848992798c"},
+    {file = "gseapy-1.1.8-cp310-cp310-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:58c5c74a2086ae9c6db5609d66ce8d34538beb2ce97d74e17f7995e2066acd8b"},
+    {file = "gseapy-1.1.8-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3c3ebb7bbcd9ec403c8143dae63be9fc6de7500e0c48b9785a772a984eac78ff"},
+    {file = "gseapy-1.1.8-cp310-cp310-win32.whl", hash = "sha256:579729b64781dcaecd9a59acfcee13004d412d7563bba46c971a9919c2477ca5"},
+    {file = "gseapy-1.1.8-cp310-cp310-win_amd64.whl", hash = "sha256:89ca0702279065b3b79ecf66558bdd4aa65db2953bf08fa4a174df99ac5c322c"},
+    {file = "gseapy-1.1.8-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:230811ad242cdc84595902a78b26ffb53f7fb0d7955fddab66d4edbf0863326d"},
+    {file = "gseapy-1.1.8-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:13eba4cb6a6344f4d1947688c22eead0bca5f7163b083c9c99ecfc7f835e0bfd"},
+    {file = "gseapy-1.1.8-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:062500902db6621407490ed3e83153750edbf0c3b4c2e06c83c4a0b85bb5e443"},
+    {file = "gseapy-1.1.8-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c130bf813cc08ce244401e034886dfb7f42a390a90dd9d42ba7c5a9df44be246"},
+    {file = "gseapy-1.1.8-cp311-cp311-win32.whl", hash = "sha256:6b32b7031baf773d78c3a099ec093b425e17a9a7ffd8014154c03d521f1dcbab"},
+    {file = "gseapy-1.1.8-cp311-cp311-win_amd64.whl", hash = "sha256:873ffbdec5140de05522d8a70c587f3fdf55c3abcfeca9fdc4477c203485efb8"},
+    {file = "gseapy-1.1.8-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:edce58d407bf8858bebfa395f22c55db55676fc900434ba2281b6d4617feb75d"},
+    {file = "gseapy-1.1.8-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ed7d2005d2e1739d416d0a6617c7d7d452d908e28b735119bc17d6365b6d42ad"},
+    {file = "gseapy-1.1.8-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:155aa6f1d6c1e8da2c293431284c45e21f2ff0857a8aa16ed587d0abd4a200f2"},
+    {file = "gseapy-1.1.8-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:66bf6897707a56015af5e7371bee2af4bc1b039b7c21ebcb1899ff2e82e0ca9e"},
+    {file = "gseapy-1.1.8-cp312-cp312-win32.whl", hash = "sha256:18ba671d55b5d69af5d80539a8fd142188c19b39221b0234c7e5e869ef58aff3"},
+    {file = "gseapy-1.1.8-cp312-cp312-win_amd64.whl", hash = "sha256:1a6596879692f9f2b88effba43cf6770814a6b09831eace8d03b8fb896fb1cb6"},
+    {file = "gseapy-1.1.8-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:8b555049d95c8a248323d48f4f1e5225df8f622454dd0143483973359f69f9c8"},
+    {file = "gseapy-1.1.8-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:79da3897d4a6343b6eecb67b3ca2ffc0ffcc853223513829b1c4763dbf594fa5"},
+    {file = "gseapy-1.1.8-cp313-cp313-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:5bc0407e93ddce225afc68c83c415aa4ec4d0c2d776eb70d86d3b2d878468960"},
+    {file = "gseapy-1.1.8-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:688f7f31c2b15ad288907fb0ee258490229cec282fe0d35e6176e918b4048e6b"},
+    {file = "gseapy-1.1.8-cp313-cp313-win32.whl", hash = "sha256:4eb74aec1a0a25bb74a37bd8121ab5493679cd0c71200d98103b349ef5e0e759"},
+    {file = "gseapy-1.1.8-cp313-cp313-win_amd64.whl", hash = "sha256:5fd18c8f80531ac63f18f4a293aef27bc2b9bc394329ad90657f10aed98d6559"},
+    {file = "gseapy-1.1.8-cp37-cp37m-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ce9cc92838376c151c97f1519d5916449a7fc8e9e2240d709f4a0082fb5c8714"},
+    {file = "gseapy-1.1.8-cp37-cp37m-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:959bb598bc76271c8d4f80ab4472ee2b3a7226773204158f0e11bfe8864d50d5"},
+    {file = "gseapy-1.1.8-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2872e37fa151f93c4ea8981f0d4ca35139e538a27b3cebbff14f277706541855"},
+    {file = "gseapy-1.1.8-cp37-cp37m-win32.whl", hash = "sha256:2a986d75110ddd8156eb20a4a71d1f299ffede0f9ba700901458186d3d4902ed"},
+    {file = "gseapy-1.1.8-cp37-cp37m-win_amd64.whl", hash = "sha256:23ad27c2a52cc813cb79de3430c26a0fabd931b285de4a6057fb4392230d3112"},
+    {file = "gseapy-1.1.8-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:d072e70f157210ca11cf6e803b698ce4d5ee0604a67de7080793bb3fb56e1b06"},
+    {file = "gseapy-1.1.8-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:24a25f7022bc57f14dd6a4e0fff108fe7effd3a7902c4e95c44d10c97a6a2e8c"},
+    {file = "gseapy-1.1.8-cp38-cp38-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:10719ae2e2610cac94344c61416c5d520f5f9446b3ce38c9207a4b29cc9c94c1"},
+    {file = "gseapy-1.1.8-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6c9192837ef9f2b9d7bcd39624042701c5c8c62cb8f772a4e7b00cfbda9ba45f"},
+    {file = "gseapy-1.1.8-cp38-cp38-win32.whl", hash = "sha256:89be6b27c5453206d7d12b9c5fb8084a0f7ebb9e73d2c886ca10a00619edc12d"},
+    {file = "gseapy-1.1.8-cp38-cp38-win_amd64.whl", hash = "sha256:04ae0f56d7d4696a076bfc8e8d30485211054a765c48772a225d712d568b88bf"},
+    {file = "gseapy-1.1.8-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:df722508652c9f8e7ed224474106aa39dd9279370761265cbf1bc58a8ffab6c4"},
+    {file = "gseapy-1.1.8-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:57733a31653c7f30515c65131e2956e9ee96bb8629373d891f76c932fbbe795a"},
+    {file = "gseapy-1.1.8-cp39-cp39-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:87ffa7ce3558e5eb57b813551bfb05b970472bc573c810a8a32180d7f709e4ad"},
+    {file = "gseapy-1.1.8-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d8cfab755037d5c2b35fa3aee79e8d66a6f9b6da0545fa449820116953de91aa"},
+    {file = "gseapy-1.1.8-cp39-cp39-win32.whl", hash = "sha256:46554587bb94c74051ce3514f4a80dc7c8ba9bd8deed9334f7c03e35dc77e53c"},
+    {file = "gseapy-1.1.8-cp39-cp39-win_amd64.whl", hash = "sha256:fedc5efe0e54c6e03949802ed26dd3c6becf53ba2a13aadcea91a4eef0e7839f"},
+    {file = "gseapy-1.1.8.tar.gz", hash = "sha256:013873a7ace7b9141b2a0d2bd85b5ae8b90ffe1e71e78a3cf32729df16f75d57"},
+]
+
+[package.dependencies]
+matplotlib = ">=2.2"
+numpy = ">=1.13.0"
+pandas = "*"
+requests = "*"
+scipy = "*"
+
+[[package]]
 name = "h11"
 version = "0.14.0"
 description = "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
@@ -6742,4 +6801,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "ad5053148078e2b42ba33f77b9a4280a7dac1aa63ee5fc9f22f11cdfc1f36156"
+content-hash = "6f1e4e8c3818bc14c946752aeb449c3b3f40956853c6c5ec54722c428b664bb0"
