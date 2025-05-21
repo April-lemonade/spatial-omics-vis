@@ -43,19 +43,13 @@ data/
 }
 ```
 ### 数据库配置
-本项目默认使用 MySQL 数据库，连接信息在代码中通过 SQLAlchemy 设置：
-`engine = create_engine("mysql+pymysql://root:@localhost/omics_data", echo=True)`
-
- 🗄️ 数据库连接参数（默认）
-
-| 参数     | 默认值        |
-|----------|---------------|
-| 用户名   | `root`        |
-| 密码     | （空）        |
-| 主机     | `localhost`   |
-| 数据库名 | `omics_data`  |
-
-请确保本地 MySQL 服务已启动，并且存在名为 omics_data 的数据库。
+本项目默认使用 MySQL 数据库，连接信息在代码中通过 SQLAlchemy 设置，在后端主目录添加.env文件连接数据库
+```json
+DB_USER=YOUR_DB_USER
+DB_PASSWORD=YOUR_DB_PASSWORD
+DB_HOST=YOUR_DB_HOST
+DB_NAME=YOUR_DB_NAME
+```
 
 ### 🚀 运行 main.py
 ```bash
