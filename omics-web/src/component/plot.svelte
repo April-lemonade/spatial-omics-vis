@@ -107,7 +107,9 @@
             displayModeBar: true,
             scrollZoom: true,
             displaylogo: false,
-            modeBarButtons: [["pan2d", "resetScale2d", "lasso2d", "select2d"]],
+            modeBarButtons: [
+                ["pan2d", "resetScale2d", "lasso2d", "select2d", "toImage"],
+            ],
             responsive: true,
         });
 

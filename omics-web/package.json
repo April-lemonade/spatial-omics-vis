@@ -20,6 +20,7 @@
     "@kitware/vtk.js": "^22.4.0",
     "@lucide/svelte": "^0.509.0",
     "@tailwindcss/vite": "^4.1.5",
+    "bits-ui": "^1.5.3",
     "d3": "^7.9.0",
     "d3-lasso": "^0.0.5",
     "plotly": "^1.0.6",

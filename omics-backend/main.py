@@ -18,6 +18,8 @@ import re
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 from sklearn.model_selection import cross_val_predict
 import gseapy as gp
@@ -854,13 +856,9 @@ def get_umap_coordinates(slice_id: str = Query(...)):
 
     return df.reset_index(drop=True).to_dict(orient="records")
 
-class EnrichmentRequest(BaseModel):
-    organism: Optional[str] = "Human"
-    gene_sets: Optional[List[str]] = ["GO_Biological_Process_2021"]
-    cutoff: Optional[float] = 0.05
-
-@app.post("/hvg-enrichment")
-def hvg_enrichment(request: EnrichmentRequest):
+@app.get("/hvg-enrichment")
+def hvg_enrichment():
+    global adata
     if "highly_variable" not in adata.var:
         return {"error": "Highly variable genes not computed."}
 
@@ -868,29 +866,54 @@ def hvg_enrichment(request: EnrichmentRequest):
     if not hvg_genes:
         return {"error": "No highly variable genes found."}
 
+    organism = "Human"
+    cutoff = 0.05
+    
+    available_sets = gp.get_library_name()
+    print([s for s in available_sets if "WikiPathways" in s])
+
+    # 明确指定多个 gene set 分类来源
+    gene_sets = {
+        "Biological Process": "GO_Biological_Process_2021",
+        "Molecular Function": "GO_Molecular_Function_2021",
+        "Cellular Component": "GO_Cellular_Component_2021",
+        "WikiPathways": "WikiPathways_2024_Human",
+        "Reactome": "Reactome_2022"
+    }
+
     all_results = []
 
-    for gene_set in request.gene_sets:
+    for category, gene_set in gene_sets.items():
         try:
             enr = gp.enrichr(
                 gene_list=hvg_genes,
                 gene_sets=gene_set,
-                organism=request.organism,
+                organism=organism,
                 outdir=None,
-                cutoff=request.cutoff
+                cutoff=cutoff,
             )
             df = enr.results.copy()
-            df["Gene_set"] = gene_set  # 添加来源标记
+            df["Gene_set"] = gene_set
+            df["Category"] = category  # 添加明确分类
             all_results.append(df)
         except Exception as e:
-            continue  # 可以选择记录或跳过失败的 gene_set
+            print(f"Failed for {gene_set}: {e}")
 
     if not all_results:
         return {"error": "No enrichment results."}
 
-    merged_df = pd.concat(all_results).sort_values("Adjusted P-value")
-    top_results = merged_df.head(40).to_dict(orient="records")
+    # 合并、排序、取 top
+    merged_df = pd.concat(all_results)
+    merged_df = merged_df.sort_values("Adjusted P-value")
 
-    return {"results": top_results}
+    # 每个分类取前 8 个
+    top_results = (
+        merged_df.groupby("Category", group_keys=False)
+        .apply(lambda x: x.head(8))
+        .reset_index(drop=True)
+        .to_dict(orient="records")
+    )
+
+    return top_results
     
     

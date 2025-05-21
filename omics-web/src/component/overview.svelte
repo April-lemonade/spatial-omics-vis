@@ -12,17 +12,20 @@
     export let currentSlice;
     export let baseApi;
     export let hoveredBarcode;
+    export let hvg;
 
     const dispatch = createEventDispatcher();
 
     let violinDiv;
     let donutDiv;
     let umapDiv;
+    let barChartDiv;
     let expandedIndex = null;
     let umap;
     let umapData;
+    let enrichmentResults;
 
-    let groups = ["Overview", "Cluster", "Log"];
+    let groups = ["Overview", "Cluster", "Gene", "Log"];
     let group = groups[0];
 
     const metrics = [
@@ -140,7 +143,7 @@
             responsive: true,
             useResizeHandler: true,
             displaylogo: false,
-            modeBarButtons: [["pan2d", "resetScale2d"]],
+            modeBarButtons: [["pan2d", "resetScale2d", "toImage"]],
         });
     }
 
@@ -155,25 +158,25 @@
 
         const clusters = Object.keys(clusterCounts).sort((a, b) => +a - +b);
         const values = clusters.map((c) => clusterCounts[c]);
-        const labels = clusters.map((c) => `Cluster ${+c}`); // +1 for display
+        const labels = clusters.map((c) => ` Cluster ${+c}`); // +1 for display
 
-        const colors = clusters.map((c) => clusterColorScale(`Cluster ${+c}`)); // 👈 统一格式
+        const colors = clusters.map((c) => clusterColorScale(c));
         const trace = {
             type: "pie",
             labels,
             values,
             hole: 0.5, // Donut hole
             marker: { colors },
-            textinfo: "percent", // 不显示百分比
+            textinfo: "percent",
             hoverinfo: "label+value",
         };
 
         const layout = {
             title: "Spot Count by Cluster",
             margin: { l: 0, r: 0, t: 0, b: 0 },
-            showlegend: true,
+            showlegend: false,
             autosize: true,
-            width: donutDiv.clientWidth,
+            width: donutDiv.clientWidth / 2,
         };
 
         let donut = await Plotly.newPlot(donutDiv, [trace], layout, {
@@ -199,7 +202,8 @@
 
     async function drawUMAP() {
         const layout = {
-            margin: { l: 0, r: 0, t: 0, b: 0 },
+            margin: { l: 40, r: 10, t: 30, b: 30 },
+            height: 400,
             showlegend: false,
             autosize: true,
             width: umapDiv.clientWidth,
@@ -247,10 +251,11 @@
         // console.log(data);
 
         umap = await Plotly.newPlot(umapDiv, traces, layout, {
+            scrollZoom: true,
             responsive: true,
             useResizeHandler: true,
             displaylogo: false,
-            modeBarButtons: [[]],
+            modeBarButtons: [["toImage"]],
         });
 
         window.addEventListener("resize", () => {
@@ -275,6 +280,101 @@
             };
             dispatch("hover", hoverInfo);
         });
+
+        window.addEventListener("resize", () => {
+            Plotly.Plots.resize(umap);
+        });
+    }
+
+    $: if (hvg && barChartDiv && group === "Gene") {
+        tick().then(() => {
+            drawEnrichmentChart(hvg);
+        });
+    }
+
+    function drawEnrichmentChart(results) {
+        const clusters = [...new Set(results.map((d) => d.Category))];
+        const colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain(clusters);
+
+        const maxLabelLength = 60;
+
+        const yLabels = [...results].map((d) =>
+            d.Term.length > maxLabelLength
+                ? d.Term.slice(0, maxLabelLength - 3) + "..."
+                : d.Term,
+        );
+
+        const tracesMap = new Map();
+
+        // 构建每个 Category 的 trace
+        for (const d of results) {
+            const label =
+                d.Term.length > maxLabelLength
+                    ? d.Term.slice(0, maxLabelLength - 3) + "..."
+                    : d.Term;
+
+            if (!tracesMap.has(d.Category)) {
+                tracesMap.set(d.Category, {
+                    type: "bar",
+                    name: d.Category,
+                    x: [],
+                    y: [],
+                    orientation: "h",
+                    text: [],
+                    textposition: "none",
+                    customdata: [],
+                    hovertemplate:
+                        "<b>%{text}</b><br>Category: " +
+                        d.Category +
+                        "<br>-log10(p-adj): %{x:.2f}<br>Genes: %{customdata}<extra></extra>",
+                    marker: {
+                        color: colorScale(d.Category),
+                    },
+                });
+            }
+
+            const trace = tracesMap.get(d.Category);
+            trace.x.push(-Math.log10(d["Adjusted P-value"]));
+            trace.y.push(label);
+            trace.text.push(d.Term);
+            trace.customdata.push(d.Genes.split(";").length);
+        }
+
+        const traces = [...tracesMap.values()];
+
+        const layout = {
+            showlegend: true,
+            title: "Top Enriched Terms (Grouped by Category)",
+            barmode: "group",
+            margin: { l: 200, r: 0, t: 100, b: 20 },
+            height: yLabels.length * 20,
+            // autosize: true,
+            // width: barChartDiv.clientWidth,
+            yaxis: {
+                categoryorder: "array",
+                categoryarray: yLabels,
+                automargin: true,
+                tickfont: { size: 12 },
+            },
+            xaxis: {
+                title: "-log10(Adjusted P-value)",
+                tickfont: { size: 12 },
+            },
+            legend: {
+                orientation: "h", // 横向排列
+                x: -50,
+                y: 10,
+                xanchor: "center", // 居中对齐
+            },
+        };
+
+        Plotly.newPlot(barChartDiv, traces, layout, {
+            scrollZoom: false,
+            responsive: true,
+            useResizeHandler: true,
+            displaylogo: false,
+            modeBarButtons: [["pan2d", "resetScale2d", "toImage"]],
+        });
     }
 
     onMount(async () => {
@@ -282,7 +382,11 @@
     });
 </script>
 
-<Tabs bind:value={group} onValueChange={(e) => (group = e.value)}>
+<Tabs
+    bind:value={group}
+    onValueChange={(e) => (group = e.value)}
+    class="w-full h-full"
+>
     {#snippet list()}
         {#each groups as g}
             <Tabs.Control value={g}>{g}</Tabs.Control>
@@ -297,7 +401,7 @@
                     <div bind:this={violinDiv}></div>
                 {:else if g === "Cluster"}
                     <div bind:this={donutDiv} class="w-full max-w-full"></div>
-                {:else if allLog}
+                {:else if g === "Log" && allLog}
                     <div class="table-wrap">
                         <table class="table caption-bottom text-xs w-full">
                             <thead>
@@ -343,6 +447,8 @@
                             </tfoot>
                         </table>
                     </div>
+                {:else}
+                    <div bind:this={barChartDiv} class="w-full h-full"></div>
                 {/if}
             </Tabs.Panel>
         {/each}

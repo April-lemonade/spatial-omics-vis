@@ -27,6 +27,7 @@
     let allSlices, currentSlice;
     let ncountSpatialData, spotMetricsData;
     let clusterColorScale;
+    let hvg;
     let allLog;
     let lassoSelected = false;
     let reclusering = false;
@@ -46,13 +47,14 @@
         await new Promise((resolve) => (image.onload = resolve));
 
         // 用当前切片 ID 获取 plot-data 和 slice-info
-        const [plotRes, infoRes, ncountRes, metricsRes, logRes] =
+        const [plotRes, infoRes, ncountRes, metricsRes, logRes, hvgRes] =
             await Promise.all([
                 fetch(`${baseApi}/plot-data?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/slice-info?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/ncount_by_cluster?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/spot-metrics?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
+                fetch(`${baseApi}/hvg-enrichment`),
             ]);
 
         const plotData = await plotRes.json();
@@ -60,9 +62,17 @@
         const ncountData = await ncountRes.json();
         const metricsData = await metricsRes.json();
         const logData = await logRes.json();
+        const hvgData = await hvgRes.json();
         // console.log(metricsData[0]);
 
-        return { plotData, sliceInfo, ncountData, metricsData, logData };
+        return {
+            plotData,
+            sliceInfo,
+            ncountData,
+            metricsData,
+            logData,
+            hvgData,
+        };
     }
 
     async function drawExpressionMatrix() {
@@ -169,13 +179,20 @@
     }
 
     onMount(async () => {
-        const { ncountData, plotData, sliceInfo, metricsData, logData } =
-            await fetchSpatial();
+        const {
+            ncountData,
+            plotData,
+            sliceInfo,
+            metricsData,
+            logData,
+            hvgData,
+        } = await fetchSpatial();
         spatialData = plotData;
         spatialInfo = sliceInfo;
         ncountSpatialData = ncountData;
         spotMetricsData = metricsData;
         allLog = logData;
+        hvg = hvgData;
         // console.log(spotMetricsData[0]);
 
         const clusters = new Set();
@@ -214,34 +231,55 @@
     <header class="text-xl p-3 bg-gray-200">空转数据可视化demo</header>
     <!-- Grid Column -->
     <div
-        class="grid grid-cols-1 md:grid-cols-[15%_50%_34%] px-1 gap-x-1 h-full overflow-hidden
+        class="grid grid-cols-1 md:grid-cols-[17%_50%_32%] px-1 gap-x-1 h-full overflow-hidden
 "
     >
         <!-- Sidebar (Left) -->
-        <aside class="p-4 border-1 border-solid rounded-lg border-stone-300">
-            <span class="font-bold">slice:</span>
-            <select class="select" bind:value={currentSlice}>
-                {#each allSlices as slice}
-                    <option value={slice}>{slice}</option>
-                {/each}
-            </select>
-            <span class="font-bold">clustering method:</span>
-            <select class="select" bind:value={currentMethod}>
-                {#each clusteringMethods as method}
-                    <option value={method}>{method}</option>
-                {/each}
-            </select>
+        <aside
+            class="p-4 border border-stone-300 rounded-lg text-sm space-y-3 leading-relaxed"
+        >
+            <!-- Slice Selector -->
+            <div>
+                <div class="font-semibold mb-1 text-gray-700">Slice</div>
+                <select
+                    class="w-full border border-gray-300 rounded px-3 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
+                    bind:value={currentSlice}
+                >
+                    {#each allSlices as slice}
+                        <option value={slice}>{slice}</option>
+                    {/each}
+                </select>
+            </div>
+
+            <!-- Clustering Method -->
+            <div>
+                <div class="font-semibold mb-1 text-gray-700">
+                    Clustering Method
+                </div>
+                <select
+                    class="w-full border border-gray-300 rounded px-3 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
+                    bind:value={currentMethod}
+                >
+                    {#each clusteringMethods as method}
+                        <option value={method}>{method}</option>
+                    {/each}
+                </select>
+            </div>
+
+            <!-- Spatial Info -->
             {#if spatialInfo}
-                {#each Object.entries(spatialInfo) as [key, value]}
-                    {#if key !== "expression"}
-                        <div class="mb-2">
-                            <strong>{key}:</strong>
-                            <div class="flex flex-row items-center gap-2">
-                                <span>{value}</span>
+                <div
+                    class="pt-2 border-t border-dashed border-stone-300 text-gray-600"
+                >
+                    {#each Object.entries(spatialInfo) as [key, value]}
+                        {#if key !== "expression"}
+                            <div class="flex justify-between text-sm py-0.5">
+                                <span class="capitalize">{key}:</span>
+                                <span class="text-gray-800">{value}</span>
                             </div>
-                        </div>
-                    {/if}
-                {/each}
+                        {/if}
+                    {/each}
+                </div>
             {/if}
         </aside>
         <!-- Main -->
@@ -321,6 +359,7 @@
                         {currentSlice}
                         {baseApi}
                         {hoveredBarcode}
+                        {hvg}
                         on:hover={(e) => {
                             hoveredBarcode = {
                                 barcode: e.detail.barcode,
