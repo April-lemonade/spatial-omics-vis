@@ -12,25 +12,19 @@ import squidpy as sq
 import scanpy as sc
 import pandas as pd
 import json
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine, insert, text
-from sqlalchemy.exc import ProgrammingError, IntegrityError
+from sqlalchemy.exc import ProgrammingError
 from rpy2.robjects import pandas2ri
 import re
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import AgglomerativeClustering
 import numpy as np
-from sklearn.model_selection import cross_val_predict
 import gseapy as gp
-from typing import Optional, List
+from typing import List
 from dotenv import load_dotenv
 from GraphST.utils import clustering
 from GraphST import GraphST
-from sklearn import metrics
-import umap
 
 load_dotenv()
 
@@ -56,35 +50,32 @@ def insert_initial_clusters(adata, engine, slice_id):
     spot_cluster = metadata.tables[table_name]
 
     with engine.connect() as conn:
-        # 1. 检查是否已有数据
         result = conn.execute(spot_cluster.select().limit(1)).fetchone()
         if result is not None:
             print(f"Table {table_name} already has data. Skipping insertion.")
-            return  # ✅ 跳过插入
-        
-        # 2. 否则插入
+            return
+
+        # ✅ 构造插入列表
+        records = []
         for i, (barcode, row) in enumerate(adata.obs.iterrows()):
-            n_count = float(row["nCount_Spatial"]) if "nCount_Spatial" in row else None
-            cluster = str(row["domain"])
-            n_feature = float(row.get("nFeature_Spatial", None))
-            percent_mito = float(row.get("pct_counts_mt", None))
-            percent_ribo = float(row.get("pct_counts_ribo", None))
             x, y = map(float, adata.obsm["spatial"][i])
-            conn.execute(
-                insert(spot_cluster).values(
-                    barcode=barcode,
-                    cluster=cluster,
-                    x=x,
-                    y=y,
-                    n_count_spatial=n_count,
-                    n_feature_spatial=n_feature,
-                    percent_mito=percent_mito,
-                    percent_ribo=percent_ribo,
-                )
-            )
+            records.append({
+                "barcode": barcode,
+                "cluster": str(row["domain"]),
+                "x": x,
+                "y": y,
+                "n_count_spatial": float(row.get("nCount_Spatial", None)),
+                "n_feature_spatial": float(row.get("nFeature_Spatial", None)),
+                "percent_mito": float(row.get("pct_counts_mt", None)),
+                "percent_ribo": float(row.get("pct_counts_ribo", None)),
+            })
+
+        # ✅ 批量插入
+        conn.execute(insert(spot_cluster), records)
         conn.commit()
-
-
+        print(f"✅ 批量插入 {len(records)} 条记录到 {table_name}")
+        
+        
 def create_tables(slice_id):
     table_name = f"spot_cluster_{slice_id}"
     spot_cluster = Table(
@@ -156,52 +147,39 @@ def prepare_data():
 
     create_tables(slice_id)
 
+    # ✅ 用数据库是否有聚类结果作为判断依据
+    table_name = f"spot_cluster_{slice_id}"
+    with engine.connect() as conn:
+        result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`")).scalar()
+        if result and result > 0:
+            print(f"✅ 数据库中已有聚类数据（{result} 条），跳过训练和聚类。")
+            adata = sq.read.visium(path=path)  # 只加载原始数据用于其他操作
+            return adata
+
+    # ⚙️ 若数据库为空，则执行完整流程
+    print("⚠️ 数据库无聚类记录，执行 GraphST + 聚类 + 入库...")
     adata_local = sq.read.visium(path=path)
+
     adata_local.obs["nCount_Spatial"] = (
         adata_local.X.sum(axis=1).A1 if hasattr(adata_local.X, "A1") else adata_local.X.sum(axis=1)
     )
-    adata_local.obs["nFeature_Spatial"] = (adata_local.X > 0).sum(1).A1 if hasattr(adata_local.X, "A1") else (
-                adata_local.X > 0).sum(1)
+    adata_local.obs["nFeature_Spatial"] = (
+        (adata_local.X > 0).sum(1).A1 if hasattr(adata_local.X, "A1") else (adata_local.X > 0).sum(1)
+    )
 
     adata_local.var["mt"] = adata_local.var_names.str.startswith("MT-")
     adata_local.var["ribo"] = adata_local.var_names.str.startswith(("RPS", "RPL"))
     sc.pp.calculate_qc_metrics(adata_local, qc_vars=["mt", "ribo"], inplace=True)
 
-    # gene_names = adata_local.var_names.tolist()
-    # X = adata_local.X.toarray() if hasattr(adata_local.X, "toarray") else adata_local.X
-    # global expression_data
-    # expression_data = [dict(zip(gene_names, map(float, X[i]))) for i in range(X.shape[0])]
-    n_clusters = 7
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(adata_local)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = GraphST.GraphST(adata_local, device=device, epochs=500)
     adata_local = model.train()
-    radius = 50
-    os.environ['R_HOME'] = "/Library/Frameworks/R.framework/Resources"
-    tool = 'mclust' 
+
+    clustering(adata_local, n_clusters=7, radius=50, method="mclust", refinement=False)
+
+    insert_initial_clusters(adata_local, engine, slice_id)
 
     adata = adata_local
-    if tool == 'mclust':
-        clustering(adata, n_clusters, radius=radius, method=tool, refinement=False) 
-    elif tool in ['leiden', 'louvain']:
-        clustering(adata, n_clusters, radius=radius, method=tool, start=0.1, end=2.0, increment=0.01, refinement=False)
-
-
-    # adata = adata[~pd.isnull(adata.obs['ground_truth'])]
-    # ARI = metrics.adjusted_rand_score(adata.obs['domain'], adata.obs['ground_truth'])
-    # sc.pp.filter_genes(adata_local, min_cells=3)
-    # sc.pp.normalize_total(adata_local)
-    # sc.pp.log1p(adata_local)
-    # sc.pp.highly_variable_genes(adata_local, flavor="seurat", n_top_genes=2000)
-    # adata_local = adata_local[:, adata_local.var.highly_variable]
-    # sc.pp.pca(adata_local)
-    # sc.pp.neighbors(adata_local)
-    # sc.tl.leiden(adata_local, key_added="leiden")
-    
-    # adata_local.obs["leiden_original"] = adata_local.obs["leiden"].copy()
-   
-    
-    insert_initial_clusters(adata, engine, slice_id)
     return adata
 
 
@@ -529,289 +507,6 @@ def recluster(req: selectedBarcodes,factor = factor):
         # 添加p值列 (1 - 置信度可以近似为p值)
         cluster_change_df['p_value'] = 1 - cluster_change_df['confidence']
         cluster_change_df
-
-        # # 2. 提取特征
-        # all_features = extract_features(adata, use_hvg_only=True, n_pcs=30)
-
-        # # 3. 合并数据库标签
-        # all_features = all_features.join(db_clusters.rename(columns={"cluster": "cluster"}))
-        # if all_features["cluster"].isnull().any():
-        #     print("⚠️ 有 barcode 在数据库中找不到匹配的 cluster")
-        
-        
-        # # # 提取所有spot的特征
-        # # all_features = extract_features(adata, use_hvg_only=True, n_pcs=30)
-        # # # print("all_features",all_features)
-        
-        # # # 添加聚类标签
-        # # all_features['cluster'] = adata.obs['leiden_original']
-        
-        # # 分离训练集和预测集
-        # train_mask = ~all_features.index.isin(selected_barcodes)
-        # predict_mask = all_features.index.isin(selected_barcodes)
-        
-        # train_data = all_features[train_mask].copy()
-        # predict_data = all_features[predict_mask].copy()
-        
-        
-        # # 检查是否有正确筛选出所有选中的barcode
-        # missing_barcodes = [b for b in selected_barcodes if b not in predict_data.index]
-        # if missing_barcodes:
-        #     print(f"警告: {len(missing_barcodes)} 个选中的barcode在预测数据中缺失")
-        #     print(f"缺失的barcode: {missing_barcodes[:5]}...")
-        
-        # # 保存原始cluster信息以便后续比较
-        # predict_data_original = predict_data[['cluster']].copy()
-        
-        # # 确保预测数据与选中的barcode一致
-        # if len(predict_data) != len(selected_barcodes):
-        #     # 可能有barcode不在原始数据中，重新确认实际用于预测的barcode
-        #     selected_barcodes = list(predict_data.index)
-        
-        # # 准备特征和标签
-        # feature_cols = [col for col in train_data.columns if col != 'cluster']
-        # X_train = train_data[feature_cols]
-        # y_train = train_data['cluster']
-        # X_predict = predict_data[feature_cols]
-        
-        # # 训练随机森林模型
-        # print("\n训练随机森林模型...")
-        # param_grid = {
-        #     'n_estimators': [100],
-        #     'max_depth': [None],
-        #     'min_samples_split': [2]
-        # }
-        # rf = RandomForestClassifier(random_state=42, class_weight='balanced')
-        # grid_search = GridSearchCV(rf, param_grid, cv=5, n_jobs=-1, scoring='balanced_accuracy')
-        # grid_search.fit(X_train, y_train)
-        # best_rf = grid_search.best_estimator_
-        
-        # # 识别最重要的特征
-        # importances = best_rf.feature_importances_
-        # feature_importance = pd.DataFrame({
-        #     'feature': feature_cols,
-        #     'importance': importances
-        # }).sort_values('importance', ascending=False)
-        
-        # # print("\nTop 10 最重要特征:")
-        # # print(feature_importance.head(10))
-        
-        # # 预测选中spot的新聚类
-        # new_clusters = best_rf.predict(X_predict)
-        
-        # # 获取预测的概率值（所有类别的概率分布）
-        # prediction_probs = best_rf.predict_proba(X_predict)
-        # # 获取每个预测的置信度 (最高概率值)
-        # confidence_scores = np.max(prediction_probs, axis=1)
-        
-        # # 创建概率分布DataFrame，包含所有类别的概率
-        # class_names = best_rf.classes_
-        # prob_cols = [f"prob_{cls}" for cls in class_names]
-        # probs_df = pd.DataFrame(prediction_probs, columns=prob_cols, index=predict_data.index)
-        
-        # # 创建结果跟踪DataFrame - 确保使用预测数据的索引
-        # result_index = predict_data.index
-        # cluster_change_df = pd.DataFrame(index=result_index)
-        # cluster_change_df['barcode'] = result_index
-        # cluster_change_df['original_cluster'] = predict_data_original['cluster'].values
-        # cluster_change_df['new_cluster'] = new_clusters.astype(str)
-        # cluster_change_df['confidence'] = confidence_scores
-        
-        
-        # # 将概率分布添加到结果中 - 使用索引合并而不是concat
-        # for col in probs_df.columns:
-        #     cluster_change_df[col] = probs_df[col]
-        
-        # print("all cluster_change_df", cluster_change_df)
-        
-        # # 添加变化状态列
-        # cluster_change_df['changed'] = cluster_change_df['original_cluster'] != cluster_change_df['new_cluster']
-        
-        # # 添加p值列 (1 - 置信度可以近似为p值)
-        # cluster_change_df['p_value'] = 1 - cluster_change_df['confidence']
-        # # 使用交叉验证获得训练集上的置信度分布
-        # cv_probs = cross_val_predict(best_rf, X_train, y_train, method='predict_proba', cv=5)
-        # cv_max_probs = np.max(cv_probs, axis=1)
-        
-        # # 对每个预测，计算相对于训练集分布的p值
-        # p_values_refined = []
-        
-        # # 确保p_values_refined与cluster_change_df长度一致
-        # for i, idx in enumerate(cluster_change_df.index):
-        #     confidence = cluster_change_df.loc[idx, 'confidence']
-        #     p_value = (cv_max_probs <= confidence).mean()
-        #     p_values_refined.append(p_value)
-        
-        
-        # # 更新p值
-        # cluster_change_df['p_value_refined'] = p_values_refined
-        
-        # # 计算第二高概率及其对应的类别
-        # second_probs = []
-        # second_classes = []
-        # diff_to_top = []  # 记录最高概率与第二高概率的差距
-        
-        # for i, idx in enumerate(cluster_change_df.index):
-        #     row = prediction_probs[i]
-        #     sorted_idx = np.argsort(row)[::-1]  # 降序排列的索引
-        #     top_class_idx = sorted_idx[0]
-        #     second_class_idx = sorted_idx[1] if len(sorted_idx) > 1 else sorted_idx[0]
-            
-        #     top_prob = row[top_class_idx]
-        #     second_prob = row[second_class_idx]
-            
-        #     second_probs.append(second_prob)
-        #     second_classes.append(class_names[second_class_idx])
-        #     diff_to_top.append(top_prob - second_prob)
-        
-        # # 将第二高概率信息添加到结果中
-        # cluster_change_df['second_prob'] = second_probs
-        # cluster_change_df['second_class'] = second_classes
-        # cluster_change_df['prob_diff'] = diff_to_top
-        
-        # # 更新adata中的聚类标签
-        # # 创建一个新的Series来存储预测的聚类结果，默认使用原始聚类
-        # predicted_clusters = pd.Series(adata.obs['domain'].values, index=adata.obs.index)
-        
-        # # 更新选中点的聚类标签
-        # for idx, row in cluster_change_df.iterrows():
-        #     if idx in predicted_clusters.index:  # 确保索引存在
-        #         predicted_clusters[idx] = row['new_cluster']
-        
-        # # 将预测的聚类结果保存到adata
-        # adata.obs['predicted_cluster'] = predicted_clusters
-        # adata.obs['predicted_cluster'] = adata.obs['predicted_cluster'].astype('category')
-        
-        # # 直接在adata.obs中创建cluster_changed列
-        # adata.obs['cluster_changed'] = adata.obs['domain'] != adata.obs['predicted_cluster']
-        # # print(f"cluster_changed统计: {adata.obs['cluster_changed'].value_counts()}")
-        
-        # # 检查变化情况，确保正确反映cluster变化
-        # selected_changed = adata.obs.loc[selected_barcodes, 'cluster_changed']
-        # # print(f"选中的spot中变化的数量: {selected_changed.sum()} (共 {len(selected_changed)})")
-        
-        # # Debug: 检查选中spot的新旧类别
-        # for idx in selected_barcodes[:5]:  # 只检查前5个
-        #     old = adata.obs.loc[idx, 'domain']
-        #     new = adata.obs.loc[idx, 'predicted_cluster']
-        #     is_changed = old != new
-        #     # print(f"Spot {idx}: 原始={old}, 预测={new}, 是否变化={is_changed}")
-        
-        # # 输出变化的总结
-        # changed_spots = cluster_change_df[cluster_change_df['changed']]
-        # unchanged_spots = cluster_change_df[~cluster_change_df['changed']]
-        
-        # print(f"\n总共有 {len(changed_spots)} 个spot的cluster发生了变化 (共{len(cluster_change_df)}个)")
-        
-        # # 变化spot的置信度分析
-        # if len(changed_spots) > 0:
-           
-            
-        #     # 置信度分布
-        #     conf_bins = [0, 0.5, 0.7, 0.8, 0.9, 1.0]
-        #     conf_labels = ['0-0.5', '0.5-0.7', '0.7-0.8', '0.8-0.9', '0.9-1.0']
-        #     conf_counts = pd.cut(changed_spots['confidence'], bins=conf_bins).value_counts().sort_index()
-            
-        #     # print("\n变化spot的置信度分布:")
-        #     for i, (level, count) in enumerate(zip(conf_labels, conf_counts)):
-        #         pct = count / len(changed_spots) * 100
-        #         # print(f"{level}: {count} ({pct:.1f}%)")
-        
-        # # 创建DataFrame保存所有预测细节
-        # prediction_details = pd.DataFrame(index=adata.obs.index)
-        # prediction_details['is_selected'] = adata.obs.index.isin(selected_barcodes)
-        # prediction_details['original_cluster'] = adata.obs['domain']
-        # prediction_details['predicted_cluster'] = adata.obs['predicted_cluster']
-        
-        # # 为选定的barcode填充更详细的信息
-        # prediction_details['confidence'] = np.nan
-        # prediction_details['p_value'] = np.nan
-        # prediction_details['p_value_refined'] = np.nan
-        # prediction_details['cluster_changed'] = False
-        # prediction_details['second_prob'] = np.nan
-        # prediction_details['second_class'] = "NA"
-        # prediction_details['prob_diff'] = np.nan
-        
-        # # 添加所有类别的概率列
-        # for cls in class_names:
-        #     prob_col = f'prob_{cls}'
-        #     prediction_details[prob_col] = np.nan
-        
-        # # 填充选定的barcode信息
-        # for idx, row in cluster_change_df.iterrows():
-        #     if idx in prediction_details.index:  # 确保索引存在
-        #         prediction_details.loc[idx, 'confidence'] = float(row['confidence'])
-        #         prediction_details.loc[idx, 'p_value'] = float(row['p_value'])
-        #         prediction_details.loc[idx, 'p_value_refined'] = float(row['p_value_refined'])
-        #         prediction_details.loc[idx, 'cluster_changed'] = bool(row['changed'])
-        #         prediction_details.loc[idx, 'second_prob'] = float(row['second_prob'])
-        #         prediction_details.loc[idx, 'second_class'] = str(row['second_class'])
-        #         prediction_details.loc[idx, 'prob_diff'] = float(row['prob_diff'])
-                
-        #         # 填充所有类别的概率
-        #         for cls in class_names:
-        #             prob_col = f'prob_{cls}'
-        #             if prob_col in row:
-        #                 prediction_details.loc[idx, prob_col] = float(row[prob_col])
-        
-        # # 将prediction_details中的所有列添加到adata.obs
-        # print("将prediction_details的所有列添加到adata.obs...")
-        # for col in prediction_details.columns:
-        #     col_name = f"pred_{col}"
-        #     if prediction_details[col].dtype == bool:
-        #         adata.obs[col_name] = prediction_details[col].astype(bool)
-        #     elif pd.api.types.is_numeric_dtype(prediction_details[col]):
-        #         adata.obs[col_name] = prediction_details[col].astype(float)
-        #     else:
-        #         adata.obs[col_name] = prediction_details[col].astype(str)
-        
-        # # 保存prediction_details到CSV文件
-        # prediction_details.to_csv(f"{slice_id}_prediction_details.csv")
-        # cluster_change_df.to_csv(f"{slice_id}_changed_details.csv")
-        # print(f"预测详情已保存到 {slice_id}_prediction_details.csv")
-        
-        # # 根据置信度对变化的spots进行分类
-        # changed_mask = prediction_details['cluster_changed'] == True
-        # if changed_mask.any():
-        #     conf_categories = pd.cut(
-        #         prediction_details.loc[changed_mask, 'confidence'],
-        #         bins=[0, 0.5, 0.7, 0.8, 0.9, 1.0],
-        #         labels=['very_low', 'low', 'medium', 'high', 'very_high']
-        #     )
-            
-        #     if not conf_categories.empty:
-        #         # 初始化为NA
-        #         prediction_details['confidence_category'] = "NA"
-        #         # 只更新变化的spot
-        #         prediction_details.loc[changed_mask, 'confidence_category'] = conf_categories
-        #         # 添加到adata
-        #         adata.obs['pred_confidence_category'] = prediction_details['confidence_category'].astype(str)
-                
-        #         # 添加可靠性评估
-        #         reliability = pd.Series("NA", index=prediction_details.index)
-                
-        #         # 定义置信度阈值和对应的可靠性标签
-        #         confidence_thresholds = [(0.9, 1.0, "highly_reliable"),
-        #                             (0.8, 0.9, "reliable"),
-        #                             (0.7, 0.8, "moderately_reliable"),
-        #                             (0.5, 0.7, "questionable"),
-        #                             (0.0, 0.5, "unreliable")]
-                
-        #         # 只更新变化的spot的可靠性
-        #         for min_conf, max_conf, label in confidence_thresholds:
-        #             mask = changed_mask & (prediction_details['confidence'] >= min_conf) & (prediction_details['confidence'] < max_conf)
-        #             reliability[mask] = label
-                
-        #         # 添加到adata
-        #         adata.obs['pred_reliability'] = reliability.astype(str)
-                
-        #         # 特别标记高可靠性的变化spot
-        #         high_confidence_change = prediction_details['cluster_changed'] == True
-        #         high_confidence_change = high_confidence_change & (prediction_details['confidence'] >= 0.8)
-        #         adata.obs['pred_high_confidence_change'] = high_confidence_change.astype(bool)
-        
-        # # 添加更多的可视化
-        # # 可视化原始聚类结果
        
         adata.uns["change_df"] = cluster_change_df
        
