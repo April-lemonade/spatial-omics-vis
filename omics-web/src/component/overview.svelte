@@ -6,6 +6,8 @@
     import { Tabs } from "@skeletonlabs/skeleton-svelte";
     import { all } from "three/tsl";
 
+    import { Segment } from "@skeletonlabs/skeleton-svelte";
+
     export let spotMetricsData;
     export let clusterColorScale;
     export let allLog;
@@ -13,6 +15,9 @@
     export let baseApi;
     export let hoveredBarcode;
     export let hvg;
+    export let availableClusters;
+    const GeneMode = ["Bar", "Sankey"];
+    let currentGeneMode = "Bar";
 
     const dispatch = createEventDispatcher();
 
@@ -20,12 +25,14 @@
     let donutDiv;
     let umapDiv;
     let barChartDiv;
+    let sankeyDiv;
     let expandedIndex = null;
     let umap;
     let umapData;
     let enrichmentResults;
+    let currentCluster;
 
-    let groups = ["Overview", "Cluster", "Gene", "Log"];
+    let groups = ["Overview", "Cluster", "Analysis", "Log"];
     let group = groups[0];
 
     const metrics = [
@@ -49,7 +56,7 @@
         });
     }
 
-    $: if (hoveredBarcode.from === "spotPlot" && umapData) {
+    $: if (hoveredBarcode.from === "spotPlot" && umapData && umapDiv) {
         // console.log(hoveredBarcode);
         drawUMAP();
     }
@@ -286,13 +293,52 @@
         });
     }
 
-    $: if (hvg && barChartDiv && group === "Gene") {
+    $: if (
+        hvg &&
+        barChartDiv &&
+        group === "Analysis" &&
+        currentGeneMode === "Bar"
+    ) {
         tick().then(() => {
-            drawEnrichmentChart(hvg);
+            console.log(hvg);
+            drawEnrichmentChart(hvg[currentCluster]);
         });
     }
 
-    function drawEnrichmentChart(results) {
+    $: if (
+        hvg &&
+        sankeyDiv &&
+        group === "Analysis" &&
+        currentGeneMode !== "Bar"
+    ) {
+        tick().then(() => {
+            // 参数：前10个term，每个term最多取前5个gene
+            const topTermCount = 10;
+            const topGenePerTerm = 5;
+
+            let data = hvg[currentCluster];
+
+            // Step 1: 按 Adjusted P-value 取前 topTermCount 个术语
+            const topTerms = [...data]
+                .sort((a, b) => a["Adjusted P-value"] - b["Adjusted P-value"])
+                .slice(0, topTermCount);
+
+            // Step 2: 构建新的 filtered 数据结构（每个 term 的前 N 个 gene）
+            const filteredResults = topTerms.map((term) => {
+                const geneList = term.Genes.split(";").map((g) => g.trim());
+                const topGenes = geneList.slice(0, topGenePerTerm); // 取前 N 个基因
+                return {
+                    ...term,
+                    Genes: topGenes.join(";"), // 重新组合回字符串
+                };
+            });
+
+            // Step 3: 传入你的桑基图绘图函数
+            drawSankey(filteredResults);
+        });
+    }
+
+    async function drawEnrichmentChart(results) {
         const clusters = [...new Set(results.map((d) => d.Category))];
         const colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain(clusters);
 
@@ -368,24 +414,141 @@
             },
         };
 
-        Plotly.newPlot(barChartDiv, traces, layout, {
+        bar = await Plotly.newPlot(barChartDiv, traces, layout, {
             scrollZoom: false,
             responsive: true,
             useResizeHandler: true,
             displaylogo: false,
             modeBarButtons: [["pan2d", "resetScale2d", "toImage"]],
         });
+
+        window.addEventListener("resize", () => {
+            Plotly.Plots.resize(bar);
+        });
+    }
+
+    async function drawSankey(results) {
+        const geneSet = new Set();
+        const termSet = [];
+        const links = [];
+
+        // 收集所有基因和Term
+        results.forEach((item) => {
+            const genes = item.Genes.split(";");
+            const term = item.Term;
+            termSet.push(term);
+            genes.forEach((g) => {
+                geneSet.add(g);
+                links.push({ source: g, target: term });
+            });
+        });
+
+        const genes = [...geneSet];
+        const terms = [...new Set(termSet)];
+        const nodes = genes.concat(terms);
+        const nodeIndex = Object.fromEntries(nodes.map((n, i) => [n, i]));
+
+        // 定义颜色比例尺
+
+        const pastelColors = [
+            "#aec6cf",
+            "#ffb347",
+            "#77dd77",
+            "#f49ac2",
+            "#cfcfc4",
+            "#b39eb5",
+            "#ff6961",
+            "#cb99c9",
+            "#fdfd96",
+            "#836953",
+        ];
+
+        const lightColors = [
+            "#b3cde0",
+            "#decbe4",
+            "#fed9a6",
+            "#ccebc5",
+            "#fbb4ae",
+            "#e5d8bd",
+            "#f2f2f2",
+            "#d9d9d9",
+            "#e6f5c9",
+            "#fddaec",
+        ];
+        const geneColorScale = d3.scaleOrdinal(pastelColors);
+        const termColorScale = d3.scaleOrdinal(lightColors);
+
+        // 为每个节点生成颜色
+        const nodeColors = nodes.map((n, i) =>
+            i < genes.length ? geneColorScale(n) : termColorScale(n),
+        );
+
+        // 构建颜色映射表：node name -> color
+        const nodeColorMap = Object.fromEntries(
+            nodes.map((n, i) => [n, nodeColors[i]]),
+        );
+
+        // 每条连接线颜色 == source 的颜色
+        const linkColors = links.map((l) => nodeColorMap[l.source]);
+
+        function hexToRgb(hex) {
+            hex = hex.replace("#", "");
+            const bigint = parseInt(hex, 16);
+            const r = (bigint >> 16) & 255;
+            const g = (bigint >> 8) & 255;
+            const b = bigint & 255;
+            return [r, g, b];
+        }
+
+        const data = {
+            type: "sankey",
+            orientation: "h",
+            node: {
+                pad: 6,
+                thickness: 20,
+                line: { color: "black", width: 0.5 },
+                label: nodes,
+                color: nodeColors,
+            },
+            link: {
+                source: links.map((l) => nodeIndex[l.source]),
+                target: links.map((l) => nodeIndex[l.target]),
+                value: links.map(() => 1),
+                color: links.map((l) => {
+                    const hex = geneColorScale(l.source);
+                    const [r, g, b] = hexToRgb(hex);
+                    return `rgba(${r}, ${g}, ${b}, 0.5)`; // 半透明
+                }),
+            },
+        };
+
+        const layout = {
+            title: "Sankey: Genes → Enriched Terms",
+            font: { size: 10 },
+            margin: { l: 20, r: 20, t: 40, b: 10 },
+            height: Math.max(400, nodes.length * 20), // 自适应高度
+        };
+
+        sankey = await Plotly.newPlot(sankeyDiv, [data], layout, {
+            displaylogo: false,
+            responsive: true,
+        });
+
+        window.addEventListener("resize", () => {
+            Plotly.Plots.resize(sankey);
+        });
     }
 
     onMount(async () => {
         umapData = await fecthUmapData();
+        currentCluster = availableClusters[0];
     });
 </script>
 
 <Tabs
     bind:value={group}
     onValueChange={(e) => (group = e.value)}
-    class="w-full h-full"
+    class="w-full h-full max-h-full"
 >
     {#snippet list()}
         {#each groups as g}
@@ -395,61 +558,125 @@
 
     {#snippet content()}
         {#each groups as g}
-            <Tabs.Panel value={g}>
-                {#if g === "Overview"}
-                    <div bind:this={umapDiv}></div>
-                    <div bind:this={violinDiv}></div>
-                {:else if g === "Cluster"}
-                    <div bind:this={donutDiv} class="w-full max-w-full"></div>
-                {:else if g === "Log" && allLog}
-                    <div class="table-wrap">
-                        <table class="table caption-bottom text-xs w-full">
-                            <thead>
-                                <tr>
-                                    <th>Barcode</th>
-                                    <th>Prev</th>
-                                    <th>New</th>
-                                </tr>
-                            </thead>
-                            <tbody class="[&>tr]:hover:preset-tonal-primary">
-                                {#each allLog as row, i}
-                                    <tr
-                                        class="cursor-pointer"
-                                        on:click={() =>
-                                            (expandedIndex =
-                                                expandedIndex === i ? null : i)}
-                                    >
-                                        <td>{row.barcode}</td>
-                                        <td>{row.old_cluster}</td>
-                                        <td>{row.new_cluster}</td>
+            <Tabs.Panel value={g} class="max-h-full h-full">
+                <div class="h-full overflow-y-scroll max-h-full">
+                    {#if g === "Overview"}
+                        <div bind:this={umapDiv}></div>
+                        <div bind:this={violinDiv}></div>
+                    {:else if g === "Cluster"}
+                        <div
+                            bind:this={donutDiv}
+                            class="w-full max-w-full"
+                        ></div>
+                    {:else if g === "Log" && allLog}
+                        <div class="table-wrap">
+                            <table class="table caption-bottom text-xs w-full">
+                                <thead>
+                                    <tr>
+                                        <th>Barcode</th>
+                                        <th>Prev</th>
+                                        <th>New</th>
                                     </tr>
-                                    {#if expandedIndex === i}
-                                        <tr class="bg-muted/30 text-sm">
-                                            <td colspan="3">
-                                                <div>
-                                                    <strong>Comment:</strong>
-                                                    {row.comment || "-"}
-                                                </div>
-                                                <div>
-                                                    <strong>Time:</strong>
-                                                    {row.updated_at}
-                                                </div>
-                                            </td>
+                                </thead>
+                                <tbody
+                                    class="[&>tr]:hover:preset-tonal-primary"
+                                >
+                                    {#each allLog as row, i}
+                                        <tr
+                                            class="cursor-pointer"
+                                            on:click={() =>
+                                                (expandedIndex =
+                                                    expandedIndex === i
+                                                        ? null
+                                                        : i)}
+                                        >
+                                            <td>{row.barcode}</td>
+                                            <td>{row.old_cluster}</td>
+                                            <td>{row.new_cluster}</td>
                                         </tr>
-                                    {/if}
-                                {/each}
-                            </tbody>
-                            <tfoot>
-                                <tr>
-                                    <td colspan="2">Total</td>
-                                    <td class="text-right">{allLog.length}</td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                {:else}
-                    <div bind:this={barChartDiv} class="w-full h-full"></div>
-                {/if}
+                                        {#if expandedIndex === i}
+                                            <tr class="bg-muted/30 text-sm">
+                                                <td colspan="3">
+                                                    <div>
+                                                        <strong>Comment:</strong
+                                                        >
+                                                        {row.comment || "-"}
+                                                    </div>
+                                                    <div>
+                                                        <strong>Time:</strong>
+                                                        {row.updated_at}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        {/if}
+                                    {/each}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td colspan="2">Total</td>
+                                        <td class="text-right"
+                                            >{allLog.length}</td
+                                        >
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    {:else}
+                        <div
+                            class="w-full flex flex-col items-center space-y-4"
+                        >
+                            <!-- Cluster 选择器 -->
+                            <div class="w-64 flex flex-col space-y-1">
+                                <label class="text-sm font-medium text-gray-700"
+                                    >Cluster</label
+                                >
+                                <select
+                                    class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                    bind:value={currentCluster}
+                                >
+                                    {#each availableClusters as c}
+                                        <option value={c}>{c}</option>
+                                    {/each}
+                                </select>
+                            </div>
+
+                            <!-- Gene Mode Segment Control -->
+                            <div class="flex flex-col space-y-1">
+                                <label class="text-sm font-medium text-gray-700"
+                                    >Chart Type</label
+                                >
+                                <Segment
+                                    name="size"
+                                    value={currentGeneMode}
+                                    onValueChange={(e) =>
+                                        (currentGeneMode = e.value)}
+                                    class="w-full flex justify-center"
+                                >
+                                    {#each GeneMode as gm}
+                                        <Segment.Item value={gm}>
+                                            {gm}
+                                        </Segment.Item>
+                                    {/each}
+                                </Segment>
+                            </div>
+
+                            <!-- Chart Display Area -->
+                            <div class="w-full max-w-5xl">
+                                {#if currentGeneMode === "Bar"}
+                                    <div
+                                        bind:this={barChartDiv}
+                                        class="w-full h-full"
+                                    ></div>
+                                {:else}
+                                    <div
+                                        bind:this={sankeyDiv}
+                                        class="w-full h-full"
+                                    ></div>
+                                {/if}
+                            </div>
+                        </div>
+                    {/if}
+                </div>
             </Tabs.Panel>
         {/each}
     {/snippet}

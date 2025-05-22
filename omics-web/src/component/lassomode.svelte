@@ -11,6 +11,8 @@
     const methods = ["RF"];
     let currentMethod = methods[0];
     let currentRow = null;
+    let result;
+    let remainingChangedCount;
 
     let reclustered = false;
     let reclusering = false;
@@ -18,7 +20,7 @@
 
     $: if (clickedInfo && reclustered) {
         const hasOriginal = clickedInfo?.[0]?.original_cluster !== undefined;
-        if (!hasOriginal) {
+        if (!hasOriginal && remainingChangedCount === 0) {
             reclustered = false;
             reclusering = false;
             expandedIndex = null;
@@ -41,6 +43,10 @@
             const data = await res.json();
             console.log("返回的数据内容：", data);
             clickedInfo = data;
+            result = data;
+            remainingChangedCount = result.filter(
+                (r) => r.changed === true,
+            ).length;
             // lassoSelected = false;
             reclustered = true;
             // dispatch("spotClick", {
@@ -53,11 +59,23 @@
 
     function acceptRecluster(row) {
         console.log(row);
+
+        const index = result.findIndex((r) => r.barcode === row.barcode);
+        if (index !== -1) {
+            result[index].changed = false;
+            // 手动触发更新
+            result = [...result];
+        }
+
+        // 重新计算仍然 changed === true 的个数
+        remainingChangedCount = result.filter((r) => r.changed === true).length;
+
         dispatch("acceptRecluster", {
             barcode: row.barcode,
             newCluster: row.new_cluster,
             oldCluster: row.original_cluster,
             comment: `${currentMethod} Recluster`,
+            remainingChangedCount,
         });
     }
 
@@ -129,7 +147,7 @@
                     </tr>
                 </thead>
                 <tbody class="[&>tr]:hover:preset-tonal-primary">
-                    {#each clickedInfo as row, i}
+                    {#each result as row, i}
                         <tr
                             class="cursor-pointer {row.changed
                                 ? 'bg-red-100'
@@ -148,7 +166,7 @@
                                         class="btn btn-sm preset-filled"
                                         on:click={(e) => {
                                             e.stopPropagation();
-                                            acceptRecluster(clickedInfo[i]);
+                                            acceptRecluster(result[i]);
                                         }}
                                     >
                                         &check;

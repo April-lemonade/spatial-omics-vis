@@ -1159,6 +1159,20 @@ files = [
 six = "*"
 
 [[package]]
+name = "dotenv"
+version = "0.9.9"
+description = "Deprecated package"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "dotenv-0.9.9-py2.py3-none-any.whl", hash = "sha256:29cf74a087b31dafdb5a446b6d7e11cbce8ed2741540e2339c69fbef92c94ce9"},
+]
+
+[package.dependencies]
+python-dotenv = "*"
+
+[[package]]
 name = "email-validator"
 version = "2.2.0"
 description = "A robust email address syntax and deliverability validation library."
@@ -1534,6 +1548,21 @@ shapely = ">=2.0.0"
 [package.extras]
 all = ["GeoAlchemy2", "SQLAlchemy (>=1.3)", "folium", "geopy", "mapclassify", "matplotlib (>=3.5.0)", "psycopg-binary (>=3.1.0)", "pyarrow (>=8.0.0)", "xyzservices"]
 dev = ["black", "codecov", "pre-commit", "pytest (>=3.1.0)", "pytest-cov", "pytest-xdist"]
+
+[[package]]
+name = "graphst"
+version = "1.1.1"
+description = "Spatially informed clustering, integration, and deconvolution of spatial transcriptomics with GraphST"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "GraphST-1.1.1-py3-none-any.whl", hash = "sha256:3d384ac093a20cb928c6e804751b7bf3bc99c545453744098acfa392a36231f3"},
+    {file = "GraphST-1.1.1.tar.gz", hash = "sha256:8d1ab580a004ba108fd718470f069cf49446f231cdb1e53c44325175d95c75d4"},
+]
+
+[package.dependencies]
+requests = "*"
 
 [[package]]
 name = "greenlet"
@@ -6801,4 +6830,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "6f1e4e8c3818bc14c946752aeb449c3b3f40956853c6c5ec54722c428b664bb0"
+content-hash = "6757861fe870b1294f097d34e47661f60a7cee8d72e120404d9906dddf10cfe2"

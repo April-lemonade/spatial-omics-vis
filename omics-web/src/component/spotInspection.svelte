@@ -27,7 +27,7 @@
 
     async function fetchLog(barcode) {
         const res = await fetch(
-            `${baseApi}/cluster-log-by-spot/?slice_id=${currentSlice}&barcode=${barcode}`,
+            `${baseApi}/cluster-log-by-spot?slice_id=${currentSlice}&barcode=${barcode}`,
         );
         log = await res.json();
     }
@@ -41,10 +41,8 @@
         clusterEdit = false;
         dispatch("clusterUpdate", {
             barcode,
-            newCluster: (value.match(/\d+/) || [value])[0],
-            oldCluster: (clickedInfo.cluster.match(/\d+/) || [
-                clickedInfo.cluster,
-            ])[0],
+            newCluster: value,
+            oldCluster: clickedInfo.cluster,
             comment,
         });
     }
@@ -67,23 +65,29 @@
                     <!-- 跳过表达数据，单独处理 -->
                     <div class="mb-2">
                         <strong>{key}:</strong>
-                        <div class="flex flex-row items-center gap-2">
-                            {#if key === "cluster"}
-                                {#if !clusterEdit}
+                        {#if key === "cluster"}
+                            {#if !clusterEdit}
+                                <div
+                                    class="flex flex-row items-center gap-2 mt-1"
+                                >
                                     <span>{spotValue}</span>
                                     <button
                                         on:click={() => {
                                             clusterEdit = true;
                                         }}
+                                        class="btn btn-sm"
                                     >
                                         <Edit size="15" />
                                     </button>
-                                {:else}
-                                    <form
-                                        class="mx-auto w-full max-w-md space-y-4"
-                                    >
+                                </div>
+                            {:else}
+                                <div class="mt-2 space-y-3">
+                                    <div class="flex items-center gap-2">
+                                        <label class="w-24 font-medium text-sm"
+                                            >New Cluster:</label
+                                        >
                                         <select
-                                            class="select"
+                                            class="select flex-1"
                                             bind:value={selectedCluster}
                                         >
                                             {#each availableClusters as cluster}
@@ -92,19 +96,22 @@
                                                 >
                                             {/each}
                                         </select>
+                                    </div>
 
-                                        <label class="label">
-                                            <!-- <span
-                                                                class="label-text"
-                                                                >Comment</span
-                                                            > -->
-                                            <textarea
-                                                class="textarea"
-                                                rows="4"
-                                                placeholder="Comment"
-                                                bind:value={comment}
-                                            ></textarea>
-                                        </label>
+                                    <div>
+                                        <label
+                                            class="block mb-1 text-sm font-medium"
+                                            >Comment</label
+                                        >
+                                        <textarea
+                                            class="textarea w-full"
+                                            rows="3"
+                                            placeholder="Comment"
+                                            bind:value={comment}
+                                        ></textarea>
+                                    </div>
+
+                                    <div class="flex gap-2">
                                         <button
                                             type="button"
                                             class="btn preset-filled"
@@ -121,21 +128,27 @@
                                                     clusterEdit = false;
                                                     comment = "";
                                                 }
-                                            }}>Confirm</button
+                                            }}
                                         >
+                                            Confirm
+                                        </button>
                                         <button
                                             type="button"
-                                            class="btn preset-filled"
+                                            class="btn"
                                             on:click={() => {
                                                 clusterEdit = false;
-                                            }}>Cancel</button
+                                            }}
                                         >
-                                    </form>
-                                {/if}
-                            {:else}
-                                <span>{spotValue}</span>
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
                             {/if}
-                        </div>
+                        {:else}
+                            <div class="mt-1">
+                                <span>{spotValue}</span>
+                            </div>
+                        {/if}
                     </div>
                 {/if}
             {/each}

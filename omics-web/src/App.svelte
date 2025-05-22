@@ -107,21 +107,22 @@
         console.log(clickedInfo);
     }
 
-    async function handleClusterUpdate({
-        barcode,
-        newCluster,
-        oldCluster,
-        comment,
-    }) {
+    async function handleClusterUpdate(info) {
+        console.log(
+            info.barcode,
+            info.newCluster,
+            info.oldCluster,
+            info.comment,
+        );
         const res = await fetch(`${baseApi}/update-cluster`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 slice_id: currentSlice,
-                barcode,
-                old_cluster: oldCluster,
-                new_cluster: newCluster,
-                comment,
+                barcode: info.barcode,
+                old_cluster: info.oldCluster,
+                new_cluster: info.newCluster,
+                comment: info.comment,
             }),
         });
 
@@ -136,10 +137,13 @@
             allLog = await updatedLogRes.json();
 
             // ✅ 更新当前点击的点的聚类
-            clickedInfo.cluster = newCluster;
+            clickedInfo.cluster = info.newCluster;
+            // clickedInfo.changed = false;
             if (lassoSelected) {
-                lassoSelected = false;
-                clickedInfo = null;
+                if (info.remainingChangedCount === 0) {
+                    lassoSelected = false;
+                    clickedInfo = null;
+                }
             }
         }
 
@@ -226,12 +230,12 @@
     </div>
 {/if}
 
-<div class="grid h-screen grid-rows-[auto_1fr_auto] gap-y-2">
+<div class="grid h-screen grid-rows-[auto_1fr_auto] gap-y-2 max-h-screen">
     <!-- Header -->
     <header class="text-xl p-3 bg-gray-200">空转数据可视化demo</header>
     <!-- Grid Column -->
     <div
-        class="grid grid-cols-1 md:grid-cols-[17%_50%_32%] px-1 gap-x-1 h-full overflow-hidden
+        class="grid grid-cols-1 md:grid-cols-[17%_50%_32%] px-1 gap-x-1 h-full overflow-hidden max-h-full
 "
     >
         <!-- Sidebar (Left) -->
@@ -304,11 +308,11 @@
         </main>
         <!-- Sidebar (Right) -->
         <aside
-            class="p-4 border-1 border-solid rounded-lg border-stone-300 h-full overflow-y-scroll scrollbar-none"
+            class="p-4 border-1 border-solid rounded-lg border-stone-300 h-full overflow-y-scroll scrollbar-none max-h-full"
             style="font-family: sans-serif;scrollbar-width: auto; scrollbar-color: #999 transparent;"
         >
             <!-- <header class="text-xl">Inspection View</header> -->
-            <div class="h-full">
+            <div class="max-h-full h-full">
                 {#if lassoSelected}
                     <!-- {#if reclustered && !reclusering}
                         <Lassomode {clickedInfo}></Lassomode>
@@ -353,6 +357,7 @@
                     ></SpotInspection>
                 {:else if spatialInfo}
                     <Overview
+                        class="max-h-full h-full"
                         {spotMetricsData}
                         {clusterColorScale}
                         {allLog}
@@ -360,6 +365,7 @@
                         {baseApi}
                         {hoveredBarcode}
                         {hvg}
+                        {availableClusters}
                         on:hover={(e) => {
                             hoveredBarcode = {
                                 barcode: e.detail.barcode,

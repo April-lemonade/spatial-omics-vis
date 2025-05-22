@@ -14,6 +14,7 @@
     let clusterEdit = false;
     let availableClusters = [];
     let selectedCluster = null;
+    let prevSpatialData;
     let comment = "";
     let image;
     const dispatch = createEventDispatcher();
@@ -33,6 +34,13 @@
     // $: if (spatialData && image) {
     //     drawPlot();
     // }
+
+    $: if (spatialData !== prevSpatialData) {
+        prevSpatialData = spatialData;
+        if (spatialData && image) {
+            drawPlot();
+        }
+    }
 
     $: if (spatialData && !plotInstance) {
         drawPlot();
@@ -193,7 +201,7 @@
                 barcode,
                 x: point.x,
                 y: point.y,
-                cluster: point.data.name,
+                cluster: point.data.name.replace(/^cluster\s*/i, ""),
             };
 
             dispatch("spotClick", {

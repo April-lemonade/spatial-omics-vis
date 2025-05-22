@@ -12,7 +12,7 @@ import squidpy as sq
 import scanpy as sc
 import pandas as pd
 import json
-from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine, insert, text
+from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine, insert, text,Text
 from sqlalchemy.exc import ProgrammingError
 from rpy2.robjects import pandas2ri
 import re
@@ -25,6 +25,7 @@ from typing import List
 from dotenv import load_dotenv
 from GraphST.utils import clustering
 from GraphST import GraphST
+
 
 load_dotenv()
 
@@ -59,6 +60,9 @@ def insert_initial_clusters(adata, engine, slice_id):
         records = []
         for i, (barcode, row) in enumerate(adata.obs.iterrows()):
             x, y = map(float, adata.obsm["spatial"][i])
+            emb_vec = adata.obsm["emb"][i]
+            emb_str = ",".join(map(str, emb_vec))  # 将嵌入向量转为字符串
+
             records.append({
                 "barcode": barcode,
                 "cluster": str(row["domain"]),
@@ -68,6 +72,7 @@ def insert_initial_clusters(adata, engine, slice_id):
                 "n_feature_spatial": float(row.get("nFeature_Spatial", None)),
                 "percent_mito": float(row.get("pct_counts_mt", None)),
                 "percent_ribo": float(row.get("pct_counts_ribo", None)),
+                "emb": emb_str,
             })
 
         # ✅ 批量插入
@@ -90,6 +95,7 @@ def create_tables(slice_id):
         Column("n_feature_spatial", Float),
         Column("percent_mito", Float),
         Column("percent_ribo", Float),
+        Column("emb",Text),
         Column("updated_at", TIMESTAMP, server_default=func.now(), onupdate=func.now()),
     )
 
@@ -147,38 +153,72 @@ def prepare_data():
 
     create_tables(slice_id)
 
-    # ✅ 用数据库是否有聚类结果作为判断依据
-    table_name = f"spot_cluster_{slice_id}"
-    with engine.connect() as conn:
-        result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`")).scalar()
-        if result and result > 0:
-            print(f"✅ 数据库中已有聚类数据（{result} 条），跳过训练和聚类。")
-            adata = sq.read.visium(path=path)  # 只加载原始数据用于其他操作
-            return adata
-
-    # ⚙️ 若数据库为空，则执行完整流程
-    print("⚠️ 数据库无聚类记录，执行 GraphST + 聚类 + 入库...")
     adata_local = sq.read.visium(path=path)
-
     adata_local.obs["nCount_Spatial"] = (
         adata_local.X.sum(axis=1).A1 if hasattr(adata_local.X, "A1") else adata_local.X.sum(axis=1)
     )
     adata_local.obs["nFeature_Spatial"] = (
         (adata_local.X > 0).sum(1).A1 if hasattr(adata_local.X, "A1") else (adata_local.X > 0).sum(1)
     )
-
     adata_local.var["mt"] = adata_local.var_names.str.startswith("MT-")
     adata_local.var["ribo"] = adata_local.var_names.str.startswith(("RPS", "RPL"))
     sc.pp.calculate_qc_metrics(adata_local, qc_vars=["mt", "ribo"], inplace=True)
+    
+    sc.pp.normalize_total(adata_local)
+    sc.pp.log1p(adata_local)
+    sc.pp.highly_variable_genes(adata_local, flavor="seurat", n_top_genes=2000)
 
+    table_name = f"spot_cluster_{slice_id}"
+    with engine.connect() as conn:
+        result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`")).scalar()
+        if result and result > 0:
+            print(f"✅ 数据库中已有聚类数据（{result} 条），从数据库恢复聚类标签。")
+            df = pd.read_sql(text(f"SELECT * FROM `{table_name}`"), conn).set_index("barcode")
+
+            # 合并数据库中的聚类信息进 adata.obs
+            for col in ["cluster", "x", "y", "n_count_spatial", "n_feature_spatial", "percent_mito", "percent_ribo"]:
+                if col in df.columns:
+                    adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(str if col == "cluster" else float)
+
+            # 如果数据库中存了 emb，也一并恢复
+            if "emb" in df.columns:
+                def safe_parse(s):
+                    try:
+                        vec = np.fromstring(s, sep=",")
+                        if vec.size == 2000:  # 要与你的 GraphST 输出一致
+                            return vec
+                        else:
+                            print(f"❌ 嵌入维度不一致: {vec.size}")
+                            return None
+                    except:
+                        return None
+
+                emb_matrix = df["emb"].apply(safe_parse)
+                emb_matrix = emb_matrix.dropna()  # 去除解析失败的行
+                adata_local = adata_local[emb_matrix.index]  # 同步过滤 adata_local
+                adata_local.obsm["emb"] = np.vstack(emb_matrix.values)
+
+            # 恢复为主用的 domain 字段
+            adata_local.obs["domain"] = adata_local.obs["cluster"].astype("category")
+
+            adata = adata_local
+            return adata
+
+    # ⚙️ 否则执行训练
+    print("⚠️ 数据库无聚类记录，执行 GraphST + 聚类 + 入库...")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = GraphST.GraphST(adata_local, device=device, epochs=500)
     adata_local = model.train()
-
+    # 👇 立即检查输出维度
+    if "emb" in adata_local.obsm:
+        print("✅ GraphST 输出维度:", adata_local.obsm["emb"].shape)
+    else:
+        print("❌ 没有发现 obsm['emb']")
+    
     clustering(adata_local, n_clusters=7, radius=50, method="mclust", refinement=False)
-
+    
+    adata_local.obs["leiden_original"] = adata_local.obs["domain"].copy()
     insert_initial_clusters(adata_local, engine, slice_id)
-
     adata = adata_local
     return adata
 
@@ -347,7 +387,7 @@ def update_cluster(req: ClusterUpdateRequest):
         if result is None:
             raise HTTPException(status_code=404, detail="Barcode not found")
 
-        if result[0] != re.search(r'\d+', req.old_cluster).group():
+        if result[0] != req.old_cluster:
             raise HTTPException(status_code=400, detail="Old cluster does not match current value")
 
         # 更新 cluster
@@ -357,7 +397,7 @@ def update_cluster(req: ClusterUpdateRequest):
                 SET cluster = :new_cluster
                 WHERE barcode = :barcode
             """),
-            {"new_cluster": re.search(r'\d+', req.new_cluster).group(), "barcode": req.barcode}
+            {"new_cluster": req.new_cluster, "barcode": req.barcode}
         )
 
         # 写入日志表
@@ -444,7 +484,7 @@ def recluster(req: selectedBarcodes,factor = factor):
         all_barcodes = adata.obs.index.tolist()
         # selected_barcodes = np.random.choice(all_barcodes, size=, replace=False)
         # selected_barcodes = list(selected_barcodes)
-        all_features = pd.DataFrame(adata.obsm['emb_pca'], index=adata.obs.index)
+        all_features = pd.DataFrame(adata.obsm['emb'], index=adata.obs.index)
         all_features['cluster'] = adata.obs['domain']
 
         train_mask = ~all_features.index.isin(selected_barcodes)
@@ -461,9 +501,9 @@ def recluster(req: selectedBarcodes,factor = factor):
         X_predict = predict_data[feature_cols]
 
         param_grid = {
-            'n_estimators': [100, 200],
-            'max_depth': [None, 20, 30],
-            'min_samples_split': [2, 5]
+            'n_estimators': [200],
+            'max_depth': [None],
+            'min_samples_split': [2]
         }
         rf = RandomForestClassifier(random_state=42, class_weight='balanced')
         grid_search = GridSearchCV(rf, param_grid, cv=5, n_jobs=-1, scoring='balanced_accuracy')
@@ -624,8 +664,8 @@ def get_umap_coordinates(slice_id: str = Query(...)):
         sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=2000)
         adata = adata[:, adata.var.highly_variable]
         sc.pp.pca(adata)
-        # 使用 adata.obsm["emb_pca"] 构建邻接图
-        sc.pp.neighbors(adata, use_rep="emb_pca")
+        # 使用 adata.obsm["emb"] 构建邻接图
+        sc.pp.neighbors(adata, use_rep="emb")
 
         # 基于该邻接图计算 UMAP
         sc.tl.umap(adata)
@@ -646,23 +686,36 @@ def get_umap_coordinates(slice_id: str = Query(...)):
 
     return df.reset_index(drop=True).to_dict(orient="records")
 
-@app.get("/hvg-enrichment")
-def hvg_enrichment():
+    
+@app.get("/hvg-enrichment")   
+def hvg_enrichment_by_clusters():
+    """
+    对adata.obs['domain']中的每个聚类执行功能富集分析
+    
+    返回:
+    dict: 包含每个聚类的富集分析结果
+    """
     global adata
+    
     if "highly_variable" not in adata.var:
         return {"error": "Highly variable genes not computed."}
-
-    hvg_genes = adata.var_names[adata.var["highly_variable"]].tolist()
-    if not hvg_genes:
-        return {"error": "No highly variable genes found."}
-
+    
+    # 获取所有聚类
+    if "domain" not in adata.obs:
+        return {"error": "Clustering results not found in adata.obs['domain']."}
+    
+    # clusters = adata.obs["domain"].unique()
+    adata.obs["domain"] = adata.obs["domain"].astype("category")
+    clusters = adata.obs["domain"].cat.categories.tolist()
+    
     organism = "Human"
     cutoff = 0.05
     
+    # 获取可用的gene set
     available_sets = gp.get_library_name()
     print([s for s in available_sets if "WikiPathways" in s])
-
-    # 明确指定多个 gene set 分类来源
+    
+    # 明确指定多个gene set分类来源
     gene_sets = {
         "Biological Process": "GO_Biological_Process_2021",
         "Molecular Function": "GO_Molecular_Function_2021",
@@ -670,40 +723,61 @@ def hvg_enrichment():
         "WikiPathways": "WikiPathways_2024_Human",
         "Reactome": "Reactome_2022"
     }
-
-    all_results = []
-
-    for category, gene_set in gene_sets.items():
-        try:
-            enr = gp.enrichr(
-                gene_list=hvg_genes,
-                gene_sets=gene_set,
-                organism=organism,
-                outdir=None,
-                cutoff=cutoff,
-            )
-            df = enr.results.copy()
-            df["Gene_set"] = gene_set
-            df["Category"] = category  # 添加明确分类
-            all_results.append(df)
-        except Exception as e:
-            print(f"Failed for {gene_set}: {e}")
-
-    if not all_results:
-        return {"error": "No enrichment results."}
-
-    # 合并、排序、取 top
-    merged_df = pd.concat(all_results)
-    merged_df = merged_df.sort_values("Adjusted P-value")
-
-    # 每个分类取前 8 个
-    top_results = (
-        merged_df.groupby("Category", group_keys=False)
-        .apply(lambda x: x.head(8))
-        .reset_index(drop=True)
-        .to_dict(orient="records")
-    )
-
-    return top_results
     
+    # 存储所有聚类的富集结果
+    all_clusters_results = {}
     
+    # 对每个聚类执行富集分析
+    for cluster in clusters:
+        print(f"Processing cluster: {cluster}")
+        
+        # 筛选当前聚类的细胞
+        cluster_cells = adata.obs_names[adata.obs["domain"] == cluster]
+        
+        # 获取差异表达基因 (可选使用rank_genes_groups)
+        cluster = str(cluster)
+        sc.tl.rank_genes_groups(adata, groupby='domain', groups=[cluster], reference='rest', method='wilcoxon')
+        top_genes = adata.uns['rank_genes_groups']['names'][cluster][:100].tolist()
+        if not top_genes:
+                    all_clusters_results[cluster] = {"error": f"No differentially expressed genes found for cluster {cluster}"}
+                    continue
+        
+        all_results = []
+        
+
+        for category, gene_set in gene_sets.items():
+            try:
+                enr = gp.enrichr(
+                    gene_list=top_genes,
+                    gene_sets=gene_set,
+                    organism=organism,
+                    outdir=None,
+                    cutoff=cutoff,
+                )
+                df = enr.results.copy()
+                
+                if not df.empty:
+                    df["Gene_set"] = gene_set
+                    df["Category"] = category  
+                    all_results.append(df)
+            except Exception as e:
+                print(f"Failed for {cluster}, {gene_set}: {e}")
+        
+        if not all_results:
+            all_clusters_results[cluster] = {"error": f"No enrichment results for cluster {cluster}"}
+            continue
+        
+        merged_df = pd.concat(all_results)
+        merged_df = merged_df.sort_values("Adjusted P-value")
+        
+        top_results = (
+            merged_df.groupby("Category", group_keys=False)
+            .apply(lambda x: x.head(8))
+            .reset_index(drop=True)
+            .to_dict(orient="records")
+        )
+        
+        all_clusters_results[cluster] = top_results
+    
+    return all_clusters_results
+
