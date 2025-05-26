@@ -83,14 +83,13 @@
         await tick();
 
         const categories = [
-            "prob_0",
-            "prob_1",
-            "prob_2",
-            "prob_3",
-            "prob_4",
-            "prob_5",
-            "prob_6",
-            "prob_7",
+            "prob_1.0",
+            "prob_2.0",
+            "prob_3.0",
+            "prob_4.0",
+            "prob_5.0",
+            "prob_6.0",
+            "prob_7.0",
         ];
         const values = categories.map((k) => currentRow[k] ?? 0);
 
@@ -123,6 +122,7 @@
     }
 
     $: if (currentRow) {
+        console.log(currentRow);
         drawRadar(currentRow);
     }
 </script>

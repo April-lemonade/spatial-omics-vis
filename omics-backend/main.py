@@ -38,7 +38,15 @@ db = os.getenv("DB_NAME")
 
 # 建立连接
 # engine = create_engine("mysql+pymysql://root:@localhost/omics_data", echo=True)
-engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}/{db}", echo=True)
+# engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}/{db}", echo=True)
+
+engine = create_engine(
+    f"mysql+pymysql://{user}:{password}@{host}/{db}",
+    echo=True,
+    pool_recycle=3600,  # 防止 MySQL 超时自动断开连接
+    pool_pre_ping=True,  # 自动检查连接是否有效
+    connect_args={"connect_timeout": 30}  # 设置连接超时为 30 秒
+)
 metadata = MetaData()
 
 pandas2ri.activate()
@@ -178,7 +186,12 @@ def prepare_data():
             # 合并数据库中的聚类信息进 adata.obs
             for col in ["cluster", "x", "y", "n_count_spatial", "n_feature_spatial", "percent_mito", "percent_ribo"]:
                 if col in df.columns:
-                    adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(str if col == "cluster" else float)
+                    # adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(str if col == "cluster" else float)
+                    if col == "cluster":
+                        # 👇 保留一位小数（即使是 1.0 也不会变成 1）
+                        adata_local.obs[col] = df.loc[adata_local.obs_names, col].apply(lambda x: f"{float(x):.1f}")
+                    else:
+                        adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(float)
 
             # 如果数据库中存了 emb，也一并恢复
             if "emb" in df.columns:
@@ -207,7 +220,7 @@ def prepare_data():
     # ⚙️ 否则执行训练
     print("⚠️ 数据库无聚类记录，执行 GraphST + 聚类 + 入库...")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = GraphST.GraphST(adata_local, device=device, epochs=500)
+    model = GraphST.GraphST(adata_local, device=device, epochs=600)
     adata_local = model.train()
     # 👇 立即检查输出维度
     if "emb" in adata_local.obsm:
@@ -218,6 +231,11 @@ def prepare_data():
     clustering(adata_local, n_clusters=7, radius=50, method="mclust", refinement=False)
     
     adata_local.obs["leiden_original"] = adata_local.obs["domain"].copy()
+    adata_local.obs["domain"] = adata_local.obs["domain"].astype("category")
+    if "domain" in adata_local.obs and not pd.api.types.is_categorical_dtype(adata_local.obs["domain"]):
+        print("ℹ️ 将 domain 字段转换为 categorical 类型")
+        adata_local.obs["domain"] = adata_local.obs["domain"].astype("category")
+    
     insert_initial_clusters(adata_local, engine, slice_id)
     adata = adata_local
     return adata
@@ -688,7 +706,7 @@ def get_umap_coordinates(slice_id: str = Query(...)):
 
     
 @app.get("/hvg-enrichment")   
-def hvg_enrichment_by_clusters():
+def hvg_enrichment():
     """
     对adata.obs['domain']中的每个聚类执行功能富集分析
     
@@ -705,7 +723,7 @@ def hvg_enrichment_by_clusters():
         return {"error": "Clustering results not found in adata.obs['domain']."}
     
     # clusters = adata.obs["domain"].unique()
-    adata.obs["domain"] = adata.obs["domain"].astype("category")
+    adata.obs["domain"] = adata.obs["domain"].astype(str).astype("category")
     clusters = adata.obs["domain"].cat.categories.tolist()
     
     organism = "Human"
@@ -781,3 +799,96 @@ def hvg_enrichment_by_clusters():
     
     return all_clusters_results
 
+@app.get("/hvg-enrichment-cluster") 
+def hvg_enrichment_by_clusters(cluster:str = Query(...)):
+    """
+    对adata.obs['domain']中的每个聚类执行功能富集分析
+    
+    返回:
+    dict: 包含每个聚类的富集分析结果
+    """
+    global adata
+    
+    if "highly_variable" not in adata.var:
+        return {"error": "Highly variable genes not computed."}
+    
+    # 获取所有聚类
+    if "domain" not in adata.obs:
+        return {"error": "Clustering results not found in adata.obs['domain']."}
+    
+    # clusters = adata.obs["domain"].unique()
+    adata.obs["domain"] = adata.obs["domain"].astype(str).astype("category")
+    # clusters = adata.obs["domain"].cat.categories.tolist()
+    
+    organism = "Human"
+    cutoff = 0.05
+    
+    # 获取可用的gene set
+    available_sets = gp.get_library_name()
+    print([s for s in available_sets if "WikiPathways" in s])
+    
+    # 明确指定多个gene set分类来源
+    gene_sets = {
+        "Biological Process": "GO_Biological_Process_2021",
+        "Molecular Function": "GO_Molecular_Function_2021",
+        "Cellular Component": "GO_Cellular_Component_2021",
+        "WikiPathways": "WikiPathways_2024_Human",
+        "Reactome": "Reactome_2022"
+    }
+    
+    # 存储所有聚类的富集结果
+    all_clusters_results = {}
+    
+    # 对每个聚类执行富集分析
+    
+    print(f"Processing cluster: {cluster}")
+    
+    # 筛选当前聚类的细胞
+    cluster_cells = adata.obs_names[adata.obs["domain"] == cluster]
+    
+    # 获取差异表达基因 (可选使用rank_genes_groups)
+    cluster = str(cluster)
+    sc.tl.rank_genes_groups(adata, groupby='domain', groups=[cluster], reference='rest', method='wilcoxon')
+    top_genes = adata.uns['rank_genes_groups']['names'][cluster][:100].tolist()
+    if not top_genes:
+                all_clusters_results[cluster] = {"error": f"No differentially expressed genes found for cluster {cluster}"}
+                return
+    
+    all_results = []
+    
+
+    for category, gene_set in gene_sets.items():
+        try:
+            enr = gp.enrichr(
+                gene_list=top_genes,
+                gene_sets=gene_set,
+                organism=organism,
+                outdir=None,
+                cutoff=cutoff,
+            )
+            df = enr.results.copy()
+            
+            if not df.empty:
+                df["Gene_set"] = gene_set
+                df["Category"] = category  
+                all_results.append(df)
+        except Exception as e:
+            print(f"Failed for {cluster}, {gene_set}: {e}")
+    
+    if not all_results:
+        all_clusters_results[cluster] = {"error": f"No enrichment results for cluster {cluster}"}
+        return
+    
+    merged_df = pd.concat(all_results)
+    merged_df = merged_df.sort_values("Adjusted P-value")
+    
+    top_results = (
+        merged_df.groupby("Category", group_keys=False)
+        .apply(lambda x: x.head(8))
+        .reset_index(drop=True)
+        .to_dict(orient="records")
+    )
+    
+    all_clusters_results[cluster] = top_results
+    
+    return all_clusters_results

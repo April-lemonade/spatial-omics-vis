@@ -5,7 +5,7 @@
     import * as d3 from "d3";
     import { Tabs } from "@skeletonlabs/skeleton-svelte";
     import { all } from "three/tsl";
-
+    import { ProgressRing } from "@skeletonlabs/skeleton-svelte";
     import { Segment } from "@skeletonlabs/skeleton-svelte";
 
     export let spotMetricsData;
@@ -14,10 +14,11 @@
     export let currentSlice;
     export let baseApi;
     export let hoveredBarcode;
-    export let hvg;
+    export let hvg = {};
     export let availableClusters;
     const GeneMode = ["Bar", "Sankey"];
     let currentGeneMode = "Bar";
+    let hvging = false;
 
     const dispatch = createEventDispatcher();
 
@@ -154,7 +155,7 @@
         });
     }
 
-    async function drawDonut(data) {
+    function drawDonut(data) {
         // 只用一次 cluster 数据，不用重复的 metric
         const clusterCounts = {};
 
@@ -186,7 +187,7 @@
             width: donutDiv.clientWidth / 2,
         };
 
-        let donut = await Plotly.newPlot(donutDiv, [trace], layout, {
+        Plotly.newPlot(donutDiv, [trace], layout, {
             responsive: true,
             useResizeHandler: true,
             displaylogo: false,
@@ -194,7 +195,7 @@
         });
 
         window.addEventListener("resize", () => {
-            Plotly.Plots.resize(donut);
+            Plotly.Plots.resize(donutDiv);
         });
     }
 
@@ -265,10 +266,6 @@
             modeBarButtons: [["toImage"]],
         });
 
-        window.addEventListener("resize", () => {
-            Plotly.Plots.resize(umap);
-        });
-
         umap.on("plotly_hover", (eventData) => {
             const point = eventData.points?.[0];
             if (point) {
@@ -289,7 +286,7 @@
         });
 
         window.addEventListener("resize", () => {
-            Plotly.Plots.resize(umap);
+            Plotly.Plots.resize(umapDiv);
         });
     }
 
@@ -300,7 +297,7 @@
         currentGeneMode === "Bar"
     ) {
         tick().then(() => {
-            console.log(hvg);
+            // console.log(hvg);
             drawEnrichmentChart(hvg[currentCluster]);
         });
     }
@@ -338,7 +335,11 @@
         });
     }
 
-    async function drawEnrichmentChart(results) {
+    function drawEnrichmentChart(results) {
+        if (!Array.isArray(results)) {
+            // console.warn("无效的富集结果：", results);
+            return;
+        }
         const clusters = [...new Set(results.map((d) => d.Category))];
         const colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain(clusters);
 
@@ -414,7 +415,7 @@
             },
         };
 
-        bar = await Plotly.newPlot(barChartDiv, traces, layout, {
+        Plotly.newPlot(barChartDiv, traces, layout, {
             scrollZoom: false,
             responsive: true,
             useResizeHandler: true,
@@ -423,11 +424,11 @@
         });
 
         window.addEventListener("resize", () => {
-            Plotly.Plots.resize(bar);
+            Plotly.Plots.resize(barChartDiv);
         });
     }
 
-    async function drawSankey(results) {
+    function drawSankey(results) {
         const geneSet = new Set();
         const termSet = [];
         const links = [];
@@ -529,14 +530,36 @@
             height: Math.max(400, nodes.length * 20), // 自适应高度
         };
 
-        sankey = await Plotly.newPlot(sankeyDiv, [data], layout, {
+        Plotly.newPlot(sankeyDiv, [data], layout, {
             displaylogo: false,
             responsive: true,
         });
 
         window.addEventListener("resize", () => {
-            Plotly.Plots.resize(sankey);
+            Plotly.Plots.resize(sankeyDiv);
         });
+    }
+
+    async function getHvg() {
+        hvging = true;
+        const hvgRes = await fetch(
+            baseApi + `/hvg-enrichment-cluster?cluster=${currentCluster}`,
+        );
+        const hvgData = await hvgRes.json();
+        console.log(hvgData);
+        // 提取 hvgData 对象中唯一的 key（如 "1.0"）
+        const rawClusterKey = Object.keys(hvgData)[0];
+
+        // 获取该 key 对应的富集结果数组
+        const enrichmentResults = hvgData[rawClusterKey];
+
+        // 将它存入 hvg 对象，用 currentCluster 作为 key
+        hvg = {
+            ...hvg,
+            [currentCluster]: enrichmentResults,
+        };
+        console.log(hvg);
+        hvging = false;
     }
 
     onMount(async () => {
@@ -544,6 +567,19 @@
         currentCluster = availableClusters[0];
     });
 </script>
+
+{#if hvging}
+    <div
+        class="fixed inset-0 z-50 flex justify-center items-center bg-white/80"
+    >
+        <ProgressRing
+            value={null}
+            size="size-14"
+            meterStroke="stroke-blue-300"
+            trackStroke="stroke-blue-400"
+        />
+    </div>
+{/if}
 
 <Tabs
     bind:value={group}
@@ -625,53 +661,67 @@
                         <div
                             class="w-full flex flex-col items-center space-y-4"
                         >
-                            <!-- Cluster 选择器 -->
-                            <div class="w-64 flex flex-col space-y-1">
-                                <label class="text-sm font-medium text-gray-700"
-                                    >Cluster</label
-                                >
-                                <select
-                                    class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-stone-400"
-                                    bind:value={currentCluster}
-                                >
-                                    {#each availableClusters as c}
-                                        <option value={c}>{c}</option>
-                                    {/each}
-                                </select>
-                            </div>
+                            <div class="w-full flex flex-row gap-6 items-end">
+                                <!-- Cluster 选择器 -->
+                                <div class="w-64 flex flex-col space-y-1">
+                                    <label
+                                        class="text-sm font-medium text-gray-700"
+                                        >Cluster</label
+                                    >
+                                    <select
+                                        class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:ring-2 focus:ring-stone-400"
+                                        bind:value={currentCluster}
+                                    >
+                                        {#each availableClusters as c}
+                                            <option value={c}>{c}</option>
+                                        {/each}
+                                    </select>
+                                </div>
 
-                            <!-- Gene Mode Segment Control -->
-                            <div class="flex flex-col space-y-1">
-                                <label class="text-sm font-medium text-gray-700"
-                                    >Chart Type</label
-                                >
-                                <Segment
-                                    name="size"
-                                    value={currentGeneMode}
-                                    onValueChange={(e) =>
-                                        (currentGeneMode = e.value)}
-                                    class="w-full flex justify-center"
-                                >
-                                    {#each GeneMode as gm}
-                                        <Segment.Item value={gm}>
-                                            {gm}
-                                        </Segment.Item>
-                                    {/each}
-                                </Segment>
+                                <!-- Gene Mode Segment Control -->
+                                <div class="flex flex-col space-y-1">
+                                    {#if !hvg[currentCluster]}
+                                        <button
+                                            type="button"
+                                            class="btn preset-filled"
+                                            on:click={getHvg}>Analyse</button
+                                        >
+                                    {:else}
+                                        <label
+                                            class="text-sm font-medium text-gray-700"
+                                            >Chart Type</label
+                                        >
+                                        <Segment
+                                            name="size"
+                                            value={currentGeneMode}
+                                            onValueChange={(e) =>
+                                                (currentGeneMode = e.value)}
+                                            class="w-full flex"
+                                        >
+                                            {#each GeneMode as gm}
+                                                <Segment.Item value={gm}
+                                                    >{gm}</Segment.Item
+                                                >
+                                            {/each}
+                                        </Segment>
+                                    {/if}
+                                </div>
                             </div>
 
                             <!-- Chart Display Area -->
                             <div class="w-full max-w-5xl">
-                                {#if currentGeneMode === "Bar"}
-                                    <div
-                                        bind:this={barChartDiv}
-                                        class="w-full h-full"
-                                    ></div>
-                                {:else}
-                                    <div
-                                        bind:this={sankeyDiv}
-                                        class="w-full h-full"
-                                    ></div>
+                                {#if hvg[currentCluster]}
+                                    {#if currentGeneMode === "Bar"}
+                                        <div
+                                            bind:this={barChartDiv}
+                                            class="w-full h-full"
+                                        ></div>
+                                    {:else}
+                                        <div
+                                            bind:this={sankeyDiv}
+                                            class="w-full h-full"
+                                        ></div>
+                                    {/if}
                                 {/if}
                             </div>
                         </div>

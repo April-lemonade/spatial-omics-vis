@@ -13,7 +13,7 @@
 
     const baseApi = "http://localhost:8000";
     let imageUrl;
-    const clusteringMethods = ["leiden"];
+    const clusteringMethods = ["mclust"];
 
     let currentMethod = clusteringMethods[0];
     let spatialDiv, heatmapDiv;
@@ -47,14 +47,14 @@
         await new Promise((resolve) => (image.onload = resolve));
 
         // 用当前切片 ID 获取 plot-data 和 slice-info
-        const [plotRes, infoRes, ncountRes, metricsRes, logRes, hvgRes] =
+        const [plotRes, infoRes, ncountRes, metricsRes, logRes] =
             await Promise.all([
                 fetch(`${baseApi}/plot-data?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/slice-info?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/ncount_by_cluster?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/spot-metrics?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
-                fetch(`${baseApi}/hvg-enrichment`),
+                // fetch(`${baseApi}/hvg-enrichment`),
             ]);
 
         const plotData = await plotRes.json();
@@ -62,7 +62,7 @@
         const ncountData = await ncountRes.json();
         const metricsData = await metricsRes.json();
         const logData = await logRes.json();
-        const hvgData = await hvgRes.json();
+        // const hvgData = await hvgRes.json();
         // console.log(metricsData[0]);
 
         return {
@@ -71,7 +71,7 @@
             ncountData,
             metricsData,
             logData,
-            hvgData,
+            // hvgData,
         };
     }
 
@@ -189,14 +189,14 @@
             sliceInfo,
             metricsData,
             logData,
-            hvgData,
+            // hvgData,
         } = await fetchSpatial();
         spatialData = plotData;
         spatialInfo = sliceInfo;
         ncountSpatialData = ncountData;
         spotMetricsData = metricsData;
         allLog = logData;
-        hvg = hvgData;
+        // hvg = hvgData;
         // console.log(spotMetricsData[0]);
 
         const clusters = new Set();
