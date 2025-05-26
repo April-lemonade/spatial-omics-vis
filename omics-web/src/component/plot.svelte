@@ -1,5 +1,5 @@
 <script>
-    import { createEventDispatcher, onMount, tick } from "svelte";
+    import { createEventDispatcher, onMount, onDestroy, tick } from "svelte";
     import Plotly from "plotly.js-dist-min";
     import * as d3 from "d3";
 
@@ -18,6 +18,7 @@
     let comment = "";
     let image;
     const dispatch = createEventDispatcher();
+    let resizeObserver;
 
     let plotInstance = null;
 
@@ -29,11 +30,6 @@
             img.onload = () => resolve(img);
         });
     }
-
-    // 监听 spatialData 一旦加载，开始绘图
-    // $: if (spatialData && image) {
-    //     drawPlot();
-    // }
 
     $: if (spatialData !== prevSpatialData) {
         prevSpatialData = spatialData;
@@ -302,6 +298,10 @@
                 from: "spotPlot",
             });
         });
+
+        window.addEventListener("resize", () => {
+            Plotly.Plots.resize(spatialDiv);
+        });
     }
 
     $: if (hoveredBarcode?.from === "umap") {
@@ -341,6 +341,21 @@
             }
         }
     }
+
+    onMount(() => {
+        resizeObserver = new ResizeObserver(() => {
+            if (plotInstance && spatialDiv) {
+                Plotly.Plots.resize(spatialDiv);
+            }
+        });
+        if (spatialDiv) resizeObserver.observe(spatialDiv);
+    });
+
+    onDestroy(() => {
+        if (resizeObserver && spatialDiv) {
+            resizeObserver.unobserve(spatialDiv);
+        }
+    });
 </script>
 
 <div class="h-full" bind:this={spatialDiv}></div>

@@ -1,5 +1,6 @@
 <script>
     import { onMount } from "svelte";
+    import Split from "split.js";
     import Plotly from "plotly.js-dist-min";
     import { Edit } from "@lucide/svelte";
     import { Tabs } from "@skeletonlabs/skeleton-svelte";
@@ -248,6 +249,13 @@
     }
 
     onMount(async () => {
+        Split(["#left-panel", "#main-panel", "#right-panel"], {
+            sizes: [17, 50, 33], // 初始宽度比例
+            minSize: [150, 300, 200], // 每列的最小宽度
+            gutterSize: 4, // 分隔条宽度
+            direction: "horizontal",
+            cursor: "col-resize",
+        });
         await refreshSpatialState();
     });
 </script>
@@ -270,12 +278,13 @@
     <header class="text-xl p-3 bg-gray-200">空转数据可视化demo</header>
     <!-- Grid Column -->
     <div
-        class="grid grid-cols-1 md:grid-cols-[17%_50%_32%] px-1 gap-x-1 h-full overflow-hidden max-h-full
-"
+        class="flex grid-cols-1 md:grid-cols-[17%_50%_32%] px-1 gap-x-1 h-full overflow-hidden max-h-full"
+        id="split-container"
     >
         <!-- Sidebar (Left) -->
         <aside
             class="p-4 border border-stone-300 rounded-lg text-sm space-y-3 leading-relaxed"
+            id="left-panel"
         >
             <!-- Slice 选择器 -->
             <div>
@@ -377,6 +386,7 @@
         <!-- Main -->
         <main
             class=" p-1 space-y-4 h-full w-full flex flex-col border-1 border-solid rounded-lg border-stone-300"
+            id="main-panel"
         >
             <Plot
                 {spatialData}
@@ -398,6 +408,7 @@
         <aside
             class="p-4 border-1 border-solid rounded-lg border-stone-300 h-full overflow-y-scroll scrollbar-none max-h-full"
             style="font-family: sans-serif;scrollbar-width: auto; scrollbar-color: #999 transparent;"
+            id="right-panel"
         >
             <!-- <header class="text-xl">Inspection View</header> -->
             <div class="max-h-full h-full">

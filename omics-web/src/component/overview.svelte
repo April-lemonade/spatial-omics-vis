@@ -155,6 +155,8 @@
             displaylogo: false,
             modeBarButtons: [["pan2d", "resetScale2d", "toImage"]],
         });
+
+        observeResize(violinDiv, () => Plotly.Plots.resize(violinDiv));
     }
 
     function drawDonut(data) {
@@ -196,17 +198,11 @@
             modeBarButtons: [[]],
         });
 
+        observeResize(donutDiv, () => Plotly.Plots.resize(donutDiv));
+
         window.addEventListener("resize", () => {
             Plotly.Plots.resize(donutDiv);
         });
-    }
-
-    async function fecthUmapData() {
-        // const response = await fetch(
-        //     baseApi + `/umap-coordinates?slice_id=${currentSlice}`,
-        // );
-        // const data = await response.json();
-        // return data;
     }
 
     async function drawUMAP() {
@@ -285,6 +281,8 @@
             };
             dispatch("hover", hoverInfo);
         });
+
+        observeResize(umapDiv, () => Plotly.Plots.resize(umapDiv));
 
         window.addEventListener("resize", () => {
             Plotly.Plots.resize(umapDiv);
@@ -424,6 +422,8 @@
             modeBarButtons: [["pan2d", "resetScale2d", "toImage"]],
         });
 
+        observeResize(barChartDiv, () => Plotly.Plots.resize(barChartDiv));
+
         window.addEventListener("resize", () => {
             Plotly.Plots.resize(barChartDiv);
         });
@@ -536,6 +536,8 @@
             responsive: true,
         });
 
+        observeResize(sankeyDiv, () => Plotly.Plots.resize(sankeyDiv));
+
         window.addEventListener("resize", () => {
             Plotly.Plots.resize(sankeyDiv);
         });
@@ -563,8 +565,16 @@
         hvging = false;
     }
 
+    function observeResize(dom, callback) {
+        if (!dom) return;
+        const ro = new ResizeObserver(() => {
+            callback?.();
+        });
+        ro.observe(dom);
+        return () => ro.disconnect();
+    }
+
     onMount(async () => {
-        // umapData = await fecthUmapData();
         currentCluster = availableClusters[0];
     });
 </script>
