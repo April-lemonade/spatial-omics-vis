@@ -16,6 +16,7 @@
     export let hoveredBarcode;
     export let hvg = {};
     export let availableClusters;
+    export let umapData;
     const GeneMode = ["Bar", "Sankey"];
     let currentGeneMode = "Bar";
     let hvging = false;
@@ -29,7 +30,7 @@
     let sankeyDiv;
     let expandedIndex = null;
     let umap;
-    let umapData;
+    // let umapData;
     let enrichmentResults;
     let currentCluster;
 
@@ -44,15 +45,16 @@
     ];
 
     // 每次切换 tab 到 Overview 且数据存在时画图
-    $: if (
-        group === "Overview" &&
-        spotMetricsData &&
-        violinDiv &&
-        umapDiv &&
-        umapData
-    ) {
+    $: if (group === "Overview" && spotMetricsData && violinDiv) {
         tick().then(() => {
             drawFacetViolins(spotMetricsData);
+            // drawUMAP();
+        });
+    }
+
+    $: if (group === "Overview" && umapDiv && umapData) {
+        tick().then(() => {
+            // drawFacetViolins(spotMetricsData);
             drawUMAP();
         });
     }
@@ -200,12 +202,11 @@
     }
 
     async function fecthUmapData() {
-        const response = await fetch(
-            baseApi + `/umap-coordinates?slice_id=${currentSlice}`,
-        );
-
-        const data = await response.json();
-        return data;
+        // const response = await fetch(
+        //     baseApi + `/umap-coordinates?slice_id=${currentSlice}`,
+        // );
+        // const data = await response.json();
+        // return data;
     }
 
     async function drawUMAP() {
@@ -563,7 +564,7 @@
     }
 
     onMount(async () => {
-        umapData = await fecthUmapData();
+        // umapData = await fecthUmapData();
         currentCluster = availableClusters[0];
     });
 </script>

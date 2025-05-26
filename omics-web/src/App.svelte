@@ -33,6 +33,17 @@
     let reclusering = false;
     let reclustered = false;
     let hoveredBarcode = { barcode: "", from: "" };
+    let epoch = 500;
+    let n_clusters = 7;
+    let umapData;
+
+    async function fecthUmapData() {
+        const response = await fetch(
+            baseApi + `/umap-coordinates?slice_id=${currentSlice}`,
+        );
+        const data = await response.json();
+        return data;
+    }
 
     async function fetchSpatial() {
         // 先获取所有的切片 ID
@@ -54,7 +65,6 @@
                 fetch(`${baseApi}/ncount_by_cluster?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/spot-metrics?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
-                // fetch(`${baseApi}/hvg-enrichment`),
             ]);
 
         const plotData = await plotRes.json();
@@ -62,8 +72,10 @@
         const ncountData = await ncountRes.json();
         const metricsData = await metricsRes.json();
         const logData = await logRes.json();
-        // const hvgData = await hvgRes.json();
-        // console.log(metricsData[0]);
+
+        if (sliceInfo.cluster_method !== "not_clustered") {
+            umapData = await fecthUmapData();
+        }
 
         return {
             plotData,
@@ -71,7 +83,6 @@
             ncountData,
             metricsData,
             logData,
-            // hvgData,
         };
     }
 
@@ -182,38 +193,62 @@
         }
     }
 
-    onMount(async () => {
-        const {
-            ncountData,
-            plotData,
-            sliceInfo,
-            metricsData,
-            logData,
-            // hvgData,
-        } = await fetchSpatial();
+    async function refreshSpatialState() {
+        const { ncountData, plotData, sliceInfo, metricsData, logData } =
+            await fetchSpatial();
+
         spatialData = plotData;
         spatialInfo = sliceInfo;
+        currentMethod = sliceInfo.cluster_method;
+        epoch = sliceInfo.epoch ?? 500;
+        n_clusters = sliceInfo.n_clusters ?? 7;
         ncountSpatialData = ncountData;
         spotMetricsData = metricsData;
         allLog = logData;
-        // hvg = hvgData;
-        // console.log(spotMetricsData[0]);
 
+        updateClusterMeta(plotData);
+    }
+
+    function updateClusterMeta(plotData) {
         const clusters = new Set();
-        plotData.forEach((trace) => {
-            clusters.add(trace.name);
-        });
+        plotData.forEach((trace) => clusters.add(trace.name));
         availableClusters = Array.from(clusters);
-        const clusterNames = availableClusters.sort((a, b) => {
-            return +a.replace("Cluster ", "") - +b.replace("Cluster ", "");
-        });
+
+        const clusterNames = availableClusters.sort(
+            (a, b) => +a.replace("Cluster ", "") - +b.replace("Cluster ", ""),
+        );
+
         clusterColorScale = d3
             .scaleOrdinal()
             .domain(clusterNames)
             .range(d3.schemeTableau10);
-        // clusterColorScale = d3
-        //     .scaleOrdinal(d3.schemeTableau10)
-        //     .domain(availableClusters);
+    }
+
+    async function iniCluster() {
+        spatialData = null;
+        hvg = {};
+        umapData = null;
+
+        const clusterRes = await fetch(baseApi + "/run-clustering", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                n_clusters,
+                method: currentMethod,
+                slice_id: currentSlice,
+                epoch,
+            }),
+        });
+
+        spatialData = await clusterRes.json();
+        umapData = await fecthUmapData();
+
+        await refreshSpatialState();
+        console.log(spatialData);
+    }
+
+    onMount(async () => {
+        await refreshSpatialState();
     });
 </script>
 
@@ -242,11 +277,13 @@
         <aside
             class="p-4 border border-stone-300 rounded-lg text-sm space-y-3 leading-relaxed"
         >
-            <!-- Slice Selector -->
+            <!-- Slice 选择器 -->
             <div>
-                <div class="font-semibold mb-1 text-gray-700">Slice</div>
+                <label class="block font-semibold text-gray-700 mb-1"
+                    >Slice</label
+                >
                 <select
-                    class="w-full border border-gray-300 rounded px-3 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
+                    class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-stone-400"
                     bind:value={currentSlice}
                 >
                     {#each allSlices as slice}
@@ -255,13 +292,13 @@
                 </select>
             </div>
 
-            <!-- Clustering Method -->
+            <!-- 聚类方法选择器 -->
             <div>
-                <div class="font-semibold mb-1 text-gray-700">
-                    Clustering Method
-                </div>
+                <label class="block font-semibold text-gray-700 mb-1"
+                    >Clustering Method</label
+                >
                 <select
-                    class="w-full border border-gray-300 rounded px-3 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
+                    class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-stone-400"
                     bind:value={currentMethod}
                 >
                     {#each clusteringMethods as method}
@@ -270,12 +307,63 @@
                 </select>
             </div>
 
+            <!-- cluster 数量滑块 -->
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1"
+                    >n_clusters</label
+                >
+                <div class="flex items-center space-x-3">
+                    <input
+                        type="range"
+                        class="flex-1"
+                        bind:value={n_clusters}
+                        min="3"
+                        max="10"
+                        step="1"
+                    />
+                    <span class="w-10 text-right text-sm text-gray-600"
+                        >{n_clusters}</span
+                    >
+                </div>
+            </div>
+
+            <!-- Epoch 滑块 -->
+            <div>
+                <label class="block font-semibold text-gray-700 mb-1"
+                    >Epoch</label
+                >
+                <div class="flex items-center space-x-3">
+                    <input
+                        type="range"
+                        class="flex-1"
+                        bind:value={epoch}
+                        min="100"
+                        max="700"
+                        step="50"
+                    />
+                    <span class="w-10 text-right text-sm text-gray-600"
+                        >{epoch}</span
+                    >
+                </div>
+            </div>
+
+            <!-- 聚类按钮 -->
+            <div class="pt-2">
+                <button
+                    type="button"
+                    class="btn preset-filled w-full"
+                    on:click={iniCluster}
+                >
+                    Cluster
+                </button>
+            </div>
+
             <!-- Spatial Info -->
             {#if spatialInfo}
                 <div
                     class="pt-2 border-t border-dashed border-stone-300 text-gray-600"
                 >
-                    {#each Object.entries(spatialInfo) as [key, value]}
+                    {#each Object.entries(spatialInfo.info_details) as [key, value]}
                         {#if key !== "expression"}
                             <div class="flex justify-between text-sm py-0.5">
                                 <span class="capitalize">{key}:</span>
@@ -366,6 +454,7 @@
                         {hoveredBarcode}
                         {hvg}
                         {availableClusters}
+                        {umapData}
                         on:hover={(e) => {
                             hoveredBarcode = {
                                 barcode: e.detail.barcode,

@@ -12,7 +12,7 @@ import squidpy as sq
 import scanpy as sc
 import pandas as pd
 import json
-from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine, insert, text,Text
+from sqlalchemy import Table, Column, Integer, String, MetaData, TIMESTAMP, Float, func, create_engine, insert, text,Text,select
 from sqlalchemy.exc import ProgrammingError
 from rpy2.robjects import pandas2ri
 import re
@@ -25,6 +25,7 @@ from typing import List
 from dotenv import load_dotenv
 from GraphST.utils import clustering
 from GraphST import GraphST
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 
 load_dotenv()
@@ -37,16 +38,16 @@ db = os.getenv("DB_NAME")
 
 
 # 建立连接
-# engine = create_engine("mysql+pymysql://root:@localhost/omics_data", echo=True)
+engine = create_engine("mysql+pymysql://root:@localhost/omics_data", echo=True)
 # engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}/{db}", echo=True)
 
-engine = create_engine(
-    f"mysql+pymysql://{user}:{password}@{host}/{db}",
-    echo=True,
-    pool_recycle=3600,  # 防止 MySQL 超时自动断开连接
-    pool_pre_ping=True,  # 自动检查连接是否有效
-    connect_args={"connect_timeout": 30}  # 设置连接超时为 30 秒
-)
+# engine = create_engine(
+#     f"mysql+pymysql://{user}:{password}@{host}/{db}",
+#     echo=True,
+#     pool_recycle=3600,  # 防止 MySQL 超时自动断开连接
+#     pool_pre_ping=True,  # 自动检查连接是否有效
+#     connect_args={"connect_timeout": 30}  # 设置连接超时为 30 秒
+# )
 metadata = MetaData()
 
 pandas2ri.activate()
@@ -118,6 +119,16 @@ def create_tables(slice_id):
         Column("comment", String(255)),
         Column("updated_at", TIMESTAMP, server_default=func.now(), onupdate=func.now()),
     )
+    
+    cluster_method = Table(
+        "cluster_method",
+        metadata,
+        Column("slice_id", String(50), primary_key=True),
+        Column("method", String(50), nullable=False),
+        Column("n_clusters", Integer),
+        Column("epoch", Integer),
+        Column("updated_at", TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    )
 
     try:
         metadata.create_all(engine)
@@ -138,9 +149,13 @@ app.add_middleware(
 # app.mount("/images", StaticFiles(directory="./data/151673/spatial"), name="images")
 
 # 全局路径与缓存
-slice_id = "151673"
-path = f"./data/{slice_id}"
-spatial_dir = os.path.join(path, "spatial")
+slice_id = ""
+path = ""
+scale ="hires"
+spatial_dir = ""
+sf = None
+scale_key = "" 
+factor = None
 
 adata = None
 expression_data = None
@@ -153,14 +168,17 @@ def get_image(slice_id: str):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(path, media_type="image/png")
 
-
 def prepare_data():
-    global adata
+    '''
+    初始只加载spot坐标和基础信息
+    '''
+    global adata,path
+    global slice_id
     if adata is not None:
         return adata
-
     create_tables(slice_id)
 
+    # 1. 加载 Visium 数据
     adata_local = sq.read.visium(path=path)
     adata_local.obs["nCount_Spatial"] = (
         adata_local.X.sum(axis=1).A1 if hasattr(adata_local.X, "A1") else adata_local.X.sum(axis=1)
@@ -171,74 +189,251 @@ def prepare_data():
     adata_local.var["mt"] = adata_local.var_names.str.startswith("MT-")
     adata_local.var["ribo"] = adata_local.var_names.str.startswith(("RPS", "RPL"))
     sc.pp.calculate_qc_metrics(adata_local, qc_vars=["mt", "ribo"], inplace=True)
-    
     sc.pp.normalize_total(adata_local)
     sc.pp.log1p(adata_local)
     sc.pp.highly_variable_genes(adata_local, flavor="seurat", n_top_genes=2000)
 
     table_name = f"spot_cluster_{slice_id}"
+
     with engine.connect() as conn:
         result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`")).scalar()
-        if result and result > 0:
-            print(f"✅ 数据库中已有聚类数据（{result} 条），从数据库恢复聚类标签。")
-            df = pd.read_sql(text(f"SELECT * FROM `{table_name}`"), conn).set_index("barcode")
 
-            # 合并数据库中的聚类信息进 adata.obs
-            for col in ["cluster", "x", "y", "n_count_spatial", "n_feature_spatial", "percent_mito", "percent_ribo"]:
-                if col in df.columns:
-                    # adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(str if col == "cluster" else float)
-                    if col == "cluster":
-                        # 👇 保留一位小数（即使是 1.0 也不会变成 1）
-                        adata_local.obs[col] = df.loc[adata_local.obs_names, col].apply(lambda x: f"{float(x):.1f}")
-                    else:
-                        adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(float)
+        if not result or result == 0:
+            # 没有数据时插入记录：cluster = unknown
+            print(f"⚠️ 数据库为空，插入初始 spot 记录，cluster='unknown'")
+            metadata = MetaData()
+            metadata.reflect(bind=engine)
+            spot_cluster = metadata.tables[table_name]
 
-            # 如果数据库中存了 emb，也一并恢复
-            if "emb" in df.columns:
-                def safe_parse(s):
-                    try:
-                        vec = np.fromstring(s, sep=",")
-                        if vec.size == 2000:  # 要与你的 GraphST 输出一致
-                            return vec
-                        else:
-                            print(f"❌ 嵌入维度不一致: {vec.size}")
-                            return None
-                    except:
-                        return None
-
-                emb_matrix = df["emb"].apply(safe_parse)
-                emb_matrix = emb_matrix.dropna()  # 去除解析失败的行
-                adata_local = adata_local[emb_matrix.index]  # 同步过滤 adata_local
-                adata_local.obsm["emb"] = np.vstack(emb_matrix.values)
-
-            # 恢复为主用的 domain 字段
-            adata_local.obs["domain"] = adata_local.obs["cluster"].astype("category")
-
+            records = []
+            for i, (barcode, row) in enumerate(adata_local.obs.iterrows()):
+                x, y = map(float, adata_local.obsm["spatial"][i])
+                records.append({
+                    "barcode": barcode,
+                    "cluster": "unknown",
+                    "x": x,
+                    "y": y,
+                    "n_count_spatial": float(row.get("nCount_Spatial", None)),
+                    "n_feature_spatial": float(row.get("nFeature_Spatial", None)),
+                    "percent_mito": float(row.get("pct_counts_mt", None)),
+                    "percent_ribo": float(row.get("pct_counts_ribo", None)),
+                    "emb": "",  # 空字符串
+                })
+            conn.execute(insert(spot_cluster), records)
+            conn.commit()
+            print(f"✅ 插入 {len(records)} 条记录，等待前端触发聚类")
+            adata_local.obs["domain"] = "unknown"
             adata = adata_local
             return adata
 
-    # ⚙️ 否则执行训练
-    print("⚠️ 数据库无聚类记录，执行 GraphST + 聚类 + 入库...")
+        # 已有记录：从数据库恢复
+        print(f"✅ 数据库已有记录（{result} 条），加载聚类和 embedding 信息")
+        df = pd.read_sql(text(f"SELECT * FROM `{table_name}`"), conn).set_index("barcode")
+
+        for col in ["cluster", "x", "y", "n_count_spatial", "n_feature_spatial", "percent_mito", "percent_ribo"]:
+            if col in df.columns:
+                if col == "cluster":
+                    adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(str)
+                else:
+                    adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(float)
+
+        if "emb" in df.columns:
+            def safe_parse(s):
+                try:
+                    vec = np.fromstring(s, sep=",")
+                    return vec if len(vec) > 0 else None
+                except:
+                    return None
+            emb_matrix = df["emb"].apply(safe_parse).dropna()
+            if len(emb_matrix) > 0:
+                adata_local = adata_local[emb_matrix.index]
+                adata_local.obsm["emb"] = np.vstack(emb_matrix.values)
+
+        adata_local.obs["domain"] = adata_local.obs["cluster"].astype("category")
+        adata = adata_local
+        return adata
+
+
+class ClusteringRequest(BaseModel):
+    slice_id: str
+    n_clusters: int = 7
+    method: str = "mclust"
+    epoch: int = 500
+    
+@app.post("/run-clustering")
+def run_clustering(request: ClusteringRequest):
+    '''
+    根据前端设置的聚类方法和参数进行聚类
+    '''
+    global adata
+    if adata is None:
+        raise HTTPException(status_code=500, detail="adata 未加载")
+
+    # 👇 执行 GraphST 聚类
+    adata = run_graphst_and_clustering(adata, n_clusters=request.n_clusters, method=request.method,epoch=request.epoch)
+
+    # ✅ 批量更新数据库
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    table_name = f"spot_cluster_{request.slice_id}"
+    spot_cluster = metadata.tables[table_name]
+
+    # 👇 构造批量更新数据（列表形式）
+    update_data = []
+    for i, (barcode, row) in enumerate(adata.obs.iterrows()):
+        cluster = f"{float(row['domain']):.1f}"
+        emb_vec = adata.obsm["emb"][i]
+        emb_str = ",".join(map(str, emb_vec))
+        update_data.append({
+            "barcode": barcode,
+            "cluster": cluster,
+            "emb": emb_str
+        })
+
+    # 👇 使用 insert...on_duplicate_key_update 并传入 update_data
+    with engine.begin() as conn:
+        insert_stmt = mysql_insert(spot_cluster)
+        stmt = insert_stmt.on_duplicate_key_update(
+            cluster=insert_stmt.inserted.cluster,
+            emb=insert_stmt.inserted.emb
+        )
+        conn.execute(stmt, update_data)  # ✅ 一定要传第二个参数
+        
+
+    print(f"✅ 聚类完成，已批量更新 {len(update_data)} 条记录至 {table_name}")
+    with engine.begin() as conn:
+         # 👇 删除 cluster_log 中当前 slice_id 的所有记录
+        cluster_log = Table("cluster_log", metadata, autoload_with=engine)
+        delete_stmt = cluster_log.delete().where(cluster_log.c.slice_id == request.slice_id)
+        conn.execute(delete_stmt)
+        
+        cluster_method = Table("cluster_method", metadata, autoload_with=engine)
+
+        insert_stmt = mysql_insert(cluster_method).values({
+            "slice_id": request.slice_id,
+            "method": request.method,
+            "n_clusters": request.n_clusters,
+            "epoch": request.epoch,
+        })
+
+        stmt = insert_stmt.on_duplicate_key_update(
+            method=insert_stmt.inserted.method,
+            n_clusters=insert_stmt.inserted.n_clusters,
+            epoch=insert_stmt.inserted.epoch,
+            updated_at=func.now()
+        )
+
+        conn.execute(stmt)
+    
+    return get_plot_data(request.slice_id)
+
+
+def run_graphst_and_clustering(adata_local, n_clusters=7, radius=50, method="mclust", refinement=False,epoch = 500):
+    print("⚙️ 执行 GraphST 模型训练与聚类...")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = GraphST.GraphST(adata_local, device=device, epochs=600)
+    model = GraphST.GraphST(adata_local, device=device, epochs=epoch)
     adata_local = model.train()
-    # 👇 立即检查输出维度
+
     if "emb" in adata_local.obsm:
         print("✅ GraphST 输出维度:", adata_local.obsm["emb"].shape)
     else:
-        print("❌ 没有发现 obsm['emb']")
-    
-    clustering(adata_local, n_clusters=7, radius=50, method="mclust", refinement=False)
-    
-    adata_local.obs["leiden_original"] = adata_local.obs["domain"].copy()
+        print("❌ 没有发现 obsm['emb']，聚类可能失败")
+
+    clustering(adata_local, n_clusters=n_clusters, radius=radius, method=method, refinement=refinement)
+
+    adata_local.obs["domain"] = adata_local.obs["domain"].astype(float).map(lambda x: f"{x:.1f}")
     adata_local.obs["domain"] = adata_local.obs["domain"].astype("category")
-    if "domain" in adata_local.obs and not pd.api.types.is_categorical_dtype(adata_local.obs["domain"]):
-        print("ℹ️ 将 domain 字段转换为 categorical 类型")
-        adata_local.obs["domain"] = adata_local.obs["domain"].astype("category")
+    adata_local.obs["leiden_original"] = adata_local.obs["domain"].copy()
+
+        
+
+    return adata_local
+
+# def prepare_data_old():
+#     global adata
+#     if adata is not None:
+#         return adata
+
+#     create_tables(slice_id)
+
+#     adata_local = sq.read.visium(path=path)
+#     adata_local.obs["nCount_Spatial"] = (
+#         adata_local.X.sum(axis=1).A1 if hasattr(adata_local.X, "A1") else adata_local.X.sum(axis=1)
+#     )
+#     adata_local.obs["nFeature_Spatial"] = (
+#         (adata_local.X > 0).sum(1).A1 if hasattr(adata_local.X, "A1") else (adata_local.X > 0).sum(1)
+#     )
+#     adata_local.var["mt"] = adata_local.var_names.str.startswith("MT-")
+#     adata_local.var["ribo"] = adata_local.var_names.str.startswith(("RPS", "RPL"))
+#     sc.pp.calculate_qc_metrics(adata_local, qc_vars=["mt", "ribo"], inplace=True)
     
-    insert_initial_clusters(adata_local, engine, slice_id)
-    adata = adata_local
-    return adata
+#     sc.pp.normalize_total(adata_local)
+#     sc.pp.log1p(adata_local)
+#     sc.pp.highly_variable_genes(adata_local, flavor="seurat", n_top_genes=2000)
+
+#     table_name = f"spot_cluster_{slice_id}"
+#     with engine.connect() as conn:
+#         result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`")).scalar()
+#         if result and result > 0:
+#             print(f"✅ 数据库中已有聚类数据（{result} 条），从数据库恢复聚类标签。")
+#             df = pd.read_sql(text(f"SELECT * FROM `{table_name}`"), conn).set_index("barcode")
+
+#             # 合并数据库中的聚类信息进 adata.obs
+#             for col in ["cluster", "x", "y", "n_count_spatial", "n_feature_spatial", "percent_mito", "percent_ribo"]:
+#                 if col in df.columns:
+#                     # adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(str if col == "cluster" else float)
+#                     if col == "cluster":
+#                         # 👇 保留一位小数（即使是 1.0 也不会变成 1）
+#                         adata_local.obs[col] = df.loc[adata_local.obs_names, col].apply(lambda x: f"{float(x):.1f}")
+#                     else:
+#                         adata_local.obs[col] = df.loc[adata_local.obs_names, col].astype(float)
+
+#             # 如果数据库中存了 emb，也一并恢复
+#             if "emb" in df.columns:
+#                 def safe_parse(s):
+#                     try:
+#                         vec = np.fromstring(s, sep=",")
+#                         if vec.size == 2000:  # 要与你的 GraphST 输出一致
+#                             return vec
+#                         else:
+#                             print(f"❌ 嵌入维度不一致: {vec.size}")
+#                             return None
+#                     except:
+#                         return None
+
+#                 emb_matrix = df["emb"].apply(safe_parse)
+#                 emb_matrix = emb_matrix.dropna()  # 去除解析失败的行
+#                 adata_local = adata_local[emb_matrix.index]  # 同步过滤 adata_local
+#                 adata_local.obsm["emb"] = np.vstack(emb_matrix.values)
+
+#             # 恢复为主用的 domain 字段
+#             adata_local.obs["domain"] = adata_local.obs["cluster"].astype("category")
+
+#             adata = adata_local
+#             return adata
+
+#     # ⚙️ 否则执行训练
+#     print("⚠️ 数据库无聚类记录，执行 GraphST + 聚类 + 入库...")
+#     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+#     model = GraphST.GraphST(adata_local, device=device, epochs=600)
+#     adata_local = model.train()
+#     # 👇 立即检查输出维度
+#     if "emb" in adata_local.obsm:
+#         print("✅ GraphST 输出维度:", adata_local.obsm["emb"].shape)
+#     else:
+#         print("❌ 没有发现 obsm['emb']")
+    
+#     clustering(adata_local, n_clusters=7, radius=50, method="mclust", refinement=False)
+    
+#     adata_local.obs["leiden_original"] = adata_local.obs["domain"].copy()
+#     adata_local.obs["domain"] = adata_local.obs["domain"].astype("category")
+#     if "domain" in adata_local.obs and not pd.api.types.is_categorical_dtype(adata_local.obs["domain"]):
+#         print("ℹ️ 将 domain 字段转换为 categorical 类型")
+#         adata_local.obs["domain"] = adata_local.obs["domain"].astype("category")
+    
+#     insert_initial_clusters(adata_local, engine, slice_id)
+#     adata = adata_local
+#     return adata
 
 
 @app.get("/allslices")
@@ -251,14 +446,16 @@ def get_all_slice_ids(data_root="./data"):
 
 @app.on_event("startup")
 def load_once():
+    global slice_id,spatial_dir,sf,scale_key,factor,path
+    slice_id = get_all_slice_ids()[0]
+    spatial_dir = os.path.join(f"./data/{slice_id}", "spatial")
+    with open(os.path.join(spatial_dir, "scalefactors_json.json"), "r") as f:
+        sf = json.load(f)
+    scale_key = "tissue_hires_scalef" if scale == "hires" else "tissue_lowres_scalef"
+    path = f"./data/{slice_id}"
+    factor = sf[scale_key]
     prepare_data()
 
-scale ="hires"
-spatial_dir = os.path.join(f"./data/{slice_id}", "spatial")
-with open(os.path.join(spatial_dir, "scalefactors_json.json"), "r") as f:
-    sf = json.load(f)
-scale_key = "tissue_hires_scalef" if scale == "hires" else "tissue_lowres_scalef"
-factor = sf[scale_key]
     
 @app.get("/plot-data")
 def get_plot_data(slice_id: str = Query(...)):
@@ -313,25 +510,49 @@ def get_slice_info(slice_id: str = Query(..., description="Slide ID like 151673"
     if not os.path.exists(info_path):
         raise HTTPException(status_code=404, detail="info.json not found for this slice")
 
-    # 读取基础信息
+    # 读取 info.json 中的原始信息
     with open(info_path, "r") as f:
         info = json.load(f)
 
-    # 实时加载 adata 以获取统计量
+    # 加载 adata 并计算统计信息
     adata_local = sq.read.visium(path=path)
     sc.pp.filter_genes(adata_local, min_cells=3)
     sc.pp.normalize_total(adata_local)
     sc.pp.log1p(adata_local)
 
+    # 添加基础统计信息
     info.update({
         "spot_count": adata_local.n_obs,
         "gene_count": adata_local.n_vars,
         "avg_genes_per_spot": round(float((adata_local.X > 0).sum(1).mean()), 2)
     })
 
-    return info
+    # 查询聚类方法表
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    cluster_method_table = metadata.tables["cluster_method"]
 
+    with engine.connect() as conn:
+        stmt = select(
+            cluster_method_table.c.method,
+            cluster_method_table.c.n_clusters,
+            cluster_method_table.c.epoch
+        ).where(cluster_method_table.c.slice_id == slice_id)
+        result = conn.execute(stmt).fetchone()
 
+    # 准备聚类方法字段（保留在顶层）
+    cluster_method = result.method if result else "not_clustered"
+    
+    n_clusters = result.n_clusters if result else None
+    epoch = result.epoch if result else None
+
+    # 把其余所有 info 字段打包
+    return {
+        "cluster_method": cluster_method,
+        "n_clusters": n_clusters,
+        "epoch": epoch,
+        "info_details": info
+    }
 
 @app.get("/ncount_by_cluster")
 def get_ncount_by_cluster(slice_id: str = Query(...)):
