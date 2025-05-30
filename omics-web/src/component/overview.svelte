@@ -11,7 +11,7 @@
     export let spotMetricsData;
     export let clusterColorScale;
     export let allLog;
-    export let currentSlice;
+    export let cellChat;
     export let baseApi;
     export let hoveredBarcode;
     export let hvg = {};
@@ -28,13 +28,14 @@
     let umapDiv;
     let barChartDiv;
     let sankeyDiv;
+    let cellChatDiv;
+    let ligandReceptorDiv;
     let expandedIndex = null;
     let umap;
-    // let umapData;
     let enrichmentResults;
     let currentCluster;
 
-    let groups = ["Overview", "Cluster", "Analysis", "Log"];
+    let groups = ["Overview", "Cluster", "SVG", "Log", "Spatial Communication"];
     let group = groups[0];
 
     const metrics = [
@@ -48,25 +49,34 @@
     $: if (group === "Overview" && spotMetricsData && violinDiv) {
         tick().then(() => {
             drawFacetViolins(spotMetricsData);
-            // drawUMAP();
+        });
+    }
+
+    $: if (
+        group === "Spatial Communication" &&
+        cellChat &&
+        cellChatDiv &&
+        ligandReceptorDiv
+    ) {
+        tick().then(() => {
+            // drawCellChat();
+            drawClusterChat();
+            drawLigandReceptorChat();
         });
     }
 
     $: if (group === "Overview" && umapDiv && umapData) {
         tick().then(() => {
-            // drawFacetViolins(spotMetricsData);
             drawUMAP();
         });
     }
 
     $: if (hoveredBarcode.from === "spotPlot" && umapData && umapDiv) {
-        // console.log(hoveredBarcode);
         drawUMAP();
     }
 
     $: if (group === "Cluster" && spotMetricsData && donutDiv) {
         tick().then(() => {
-            // drawFacetViolins(spotMetricsData);
             drawDonut(spotMetricsData);
         });
     }
@@ -289,24 +299,14 @@
         });
     }
 
-    $: if (
-        hvg &&
-        barChartDiv &&
-        group === "Analysis" &&
-        currentGeneMode === "Bar"
-    ) {
+    $: if (hvg && barChartDiv && group === "SVG" && currentGeneMode === "Bar") {
         tick().then(() => {
             // console.log(hvg);
             drawEnrichmentChart(hvg[currentCluster]);
         });
     }
 
-    $: if (
-        hvg &&
-        sankeyDiv &&
-        group === "Analysis" &&
-        currentGeneMode !== "Bar"
-    ) {
+    $: if (hvg && sankeyDiv && group === "SVG" && currentGeneMode !== "Bar") {
         tick().then(() => {
             // 参数：前10个term，每个term最多取前5个gene
             const topTermCount = 10;
@@ -574,6 +574,383 @@
         return () => ro.disconnect();
     }
 
+    async function drawCellChat() {
+        const nodes = [];
+        const nodeMap = new Map(); // label -> index
+        const links = [];
+
+        function getNodeIndex(label) {
+            if (!nodeMap.has(label)) {
+                nodeMap.set(label, nodes.length);
+                nodes.push(label);
+            }
+            return nodeMap.get(label);
+        }
+
+        // 强制将 source_cluster 和 target_cluster 分开处理
+        const sourceClusters = new Set();
+        const targetClusters = new Set();
+        const ligands = new Set();
+        const receptors = new Set();
+
+        // 先收集节点
+        cellChat.forEach((row) => {
+            sourceClusters.add(`SRC:${row.source_cluster}`);
+            targetClusters.add(`TGT:${row.target_cluster}`);
+            ligands.add(`L:${row.ligand}`);
+            receptors.add(`R:${row.receptor}`);
+        });
+
+        // 按顺序加入节点：Source Cluster → Ligand → Receptor → Target Cluster
+        [
+            ...sourceClusters,
+            ...ligands,
+            ...receptors,
+            ...targetClusters,
+        ].forEach((label) => {
+            getNodeIndex(label);
+        });
+
+        // 创建链接
+        cellChat.forEach((row) => {
+            const sourceCluster = `SRC:${row.source_cluster}`;
+            const ligand = `L:${row.ligand}`;
+            const receptor = `R:${row.receptor}`;
+            const targetCluster = `TGT:${row.target_cluster}`;
+            const score = row.interaction_score;
+
+            links.push({
+                source: nodeMap.get(sourceCluster),
+                target: nodeMap.get(ligand),
+                value: score,
+            });
+            links.push({
+                source: nodeMap.get(ligand),
+                target: nodeMap.get(receptor),
+                value: score,
+            });
+            links.push({
+                source: nodeMap.get(receptor),
+                target: nodeMap.get(targetCluster),
+                value: score,
+            });
+        });
+
+        const labelClean = (label) => {
+            return label
+                .replace(/^SRC:/, "Cluster ")
+                .replace(/^TGT:/, "Cluster ")
+                .replace(/^L:/, "")
+                .replace(/^R:/, "");
+        };
+
+        const colorMap = (label) => {
+            if (label.startsWith("SRC:")) return "#636efa";
+            if (label.startsWith("TGT:")) return "#636efa";
+            if (label.startsWith("L:")) return "#EF553B";
+            if (label.startsWith("R:")) return "#00cc96";
+            return "#AB63FA";
+        };
+
+        const sankeyData = {
+            type: "sankey",
+            orientation: "h",
+            node: {
+                pad: 15,
+                thickness: 20,
+                line: { color: "black", width: 0.5 },
+                label: nodes.map(labelClean),
+                color: nodes.map(colorMap),
+            },
+            link: {
+                source: links.map((d) => d.source),
+                target: links.map((d) => d.target),
+                value: links.map((d) => d.value),
+            },
+        };
+
+        const layout = {
+            title: "Cluster → Ligand → Receptor → Cluster Communication",
+            font: { size: 12 },
+            height: 900,
+            width: 1300,
+        };
+
+        Plotly.newPlot(cellChatDiv, [sankeyData], layout);
+    }
+
+    function drawClusterChat() {
+        console.log(cellChat);
+        d3.select(cellChatDiv).select("svg").remove();
+        const width = 500;
+        const height = width;
+        const innerRadius = Math.min(width, height) * 0.5 - 20;
+        const outerRadius = innerRadius + 6;
+
+        const data = cellChat.map((d) => ({
+            source: String(d.source_cluster),
+            target: String(d.target_cluster),
+            value: d.interaction_score,
+        }));
+
+        const names = Array.from(
+            new Set(data.flatMap((d) => [d.source, d.target])),
+        );
+        const index = new Map(names.map((name, i) => [name, i]));
+
+        const matrix = Array.from({ length: names.length }, () =>
+            new Array(names.length).fill(0),
+        );
+
+        for (const { source, target, value } of data) {
+            matrix[index.get(source)][index.get(target)] += value;
+        }
+
+        const chord = d3
+            .chordDirected()
+            .padAngle(12 / innerRadius)
+            .sortSubgroups(d3.descending)
+            .sortChords(d3.descending);
+
+        const chords = chord(matrix);
+        chords.groups.forEach((d) => {
+            d.name = names[d.index];
+        });
+
+        chords.forEach((d) => {
+            d.source.name = names[d.source.index];
+            d.target.name = names[d.target.index];
+        });
+        // console.log(chords);
+
+        // 每个 cluster 的交互总量（outgoing + incoming）
+        const groupScores = chords.groups.map((d) => {
+            const out = d3.sum(matrix[d.index]);
+            const _in = d3.sum(matrix, (row) => row[d.index]);
+            return out + _in;
+        });
+
+        const radiusScale = d3
+            .scaleSqrt()
+            .domain([0, d3.max(groupScores)])
+            .range([innerRadius, innerRadius + 15]);
+
+        // const arc = d3.arc().innerRadius(innerRadius).outerRadius(outerRadius);
+        const arc = d3
+            .arc()
+            .innerRadius(innerRadius)
+            .outerRadius((d) => radiusScale(groupScores[d.index]));
+
+        const ribbon = d3
+            .ribbonArrow()
+            .radius(innerRadius - 0.5)
+            .padAngle(1 / innerRadius);
+
+        const colors = d3.schemeCategory10;
+
+        const formatValue = (x) => x.toFixed(6);
+
+        const svg = d3
+            .select(cellChatDiv)
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .attr("viewBox", [-width / 2, -height / 2, width, height])
+            .attr("style", "width: 100%; height: auto; font: 10px sans-serif;");
+
+        const textId = "text-path-id";
+
+        svg.append("path")
+            .attr("id", textId)
+            .attr("fill", "none")
+            .attr(
+                "d",
+                d3.arc()({ outerRadius, startAngle: 0, endAngle: 2 * Math.PI }),
+            );
+
+        // Ribbons (arrows)
+        svg.append("g")
+            .attr("fill-opacity", 0.75)
+            .selectAll("path")
+            .data(chords)
+            .join("path")
+            .attr("d", ribbon)
+            .attr("fill", (d) => clusterColorScale(d.source.name))
+            .style("mix-blend-mode", "multiply")
+            .append("title")
+            .text((d) => {
+                const sourceName = names[d.source.index];
+                const targetName = names[d.target.index];
+                const matched = data.find(
+                    (item) =>
+                        item.source === sourceName &&
+                        item.target === targetName,
+                );
+                const score = matched ? matched.value : 0;
+                return `${sourceName} → ${targetName}\nScore: ${formatValue(score)}`;
+            });
+
+        // Arcs and labels
+        const g = svg.append("g").selectAll("g").data(chords.groups).join("g");
+
+        g.append("path")
+            .attr("d", arc)
+            .attr("fill", (d) => clusterColorScale(d.name))
+            .attr("stroke", "#fff");
+
+        g.append("text")
+            .attr("dy", -3)
+            .append("textPath")
+            .attr("xlink:href", `#${textId}`)
+            .attr("startOffset", (d) => d.startAngle * outerRadius)
+            .text((d) => names[d.index]);
+
+        g.append("title").text((d) => {
+            const out = d3.sum(matrix[d.index]);
+            const _in = d3.sum(matrix, (row) => row[d.index]);
+            return `${names[d.index]}
+→ others: ${formatValue(out)}
+← from others: ${formatValue(_in)}`;
+        });
+    }
+
+    function drawLigandReceptorChat() {
+        console.log(cellChat);
+        d3.select(ligandReceptorDiv).select("svg").remove();
+        const width = 500;
+        const height = width;
+        const innerRadius = Math.min(width, height) * 0.5 - 20;
+        const outerRadius = innerRadius + 6;
+
+        const data = cellChat.map((d) => ({
+            source: String(d.ligand),
+            target: String(d.receptor),
+            value: d.interaction_score,
+        }));
+        console.log(data);
+        const names = Array.from(
+            new Set(data.flatMap((d) => [d.source, d.target])),
+        );
+
+        const index = new Map(names.map((name, i) => [name, i]));
+
+        const matrix = Array.from({ length: names.length }, () =>
+            new Array(names.length).fill(0),
+        );
+
+        for (const { source, target, value } of data) {
+            matrix[index.get(source)][index.get(target)] += value;
+        }
+
+        const chord = d3
+            .chordDirected()
+            .padAngle(12 / innerRadius)
+            .sortSubgroups(d3.descending)
+            .sortChords(d3.descending);
+
+        const chords = chord(matrix);
+        chords.groups.forEach((d) => {
+            d.name = names[d.index];
+        });
+
+        chords.forEach((d) => {
+            d.source.name = names[d.source.index];
+            d.target.name = names[d.target.index];
+        });
+        console.log(chords);
+
+        // 每个 cluster 的交互总量（outgoing + incoming）
+        const groupScores = chords.groups.map((d) => {
+            const out = d3.sum(matrix[d.index]);
+            const _in = d3.sum(matrix, (row) => row[d.index]);
+            return out + _in;
+        });
+
+        // 构建一个 scale 来控制圆的大小
+        const radiusScale = d3
+            .scaleSqrt()
+            .domain([0, d3.max(groupScores)])
+            .range([innerRadius, innerRadius + 15]); // 控制圆的大小变化幅度
+
+        // const arc = d3.arc().innerRadius(innerRadius).outerRadius(outerRadius);
+        const arc = d3
+            .arc()
+            .innerRadius(innerRadius)
+            .outerRadius((d) => radiusScale(groupScores[d.index]));
+
+        const ribbon = d3
+            .ribbonArrow()
+            .radius(innerRadius - 0.5)
+            .padAngle(1 / innerRadius);
+
+        const colors = d3.schemeCategory10;
+
+        const formatValue = (x) => x.toFixed(6);
+
+        const svg = d3
+            .select(ligandReceptorDiv)
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .attr("viewBox", [-width / 2, -height / 2, width, height])
+            .attr("style", "width: 100%; height: auto; font: 10px sans-serif;");
+
+        const textId = "text-path-id";
+
+        svg.append("path")
+            .attr("id", textId)
+            .attr("fill", "none")
+            .attr(
+                "d",
+                d3.arc()({ outerRadius, startAngle: 0, endAngle: 2 * Math.PI }),
+            );
+
+        // Ribbons (arrows)
+        svg.append("g")
+            .attr("fill-opacity", 0.75)
+            .selectAll("path")
+            .data(chords)
+            .join("path")
+            .attr("d", ribbon)
+            .attr("fill", (d) => clusterColorScale(d.source.name))
+            .style("mix-blend-mode", "multiply")
+            .append("title")
+            .text((d) => {
+                const sourceName = names[d.source.index];
+                const targetName = names[d.target.index];
+                const matched = data.find(
+                    (item) =>
+                        item.source === sourceName &&
+                        item.target === targetName,
+                );
+                const score = matched ? matched.value : 0;
+                return `${sourceName} → ${targetName}\nScore: ${formatValue(score)}`;
+            });
+
+        // Arcs and labels
+        const g = svg.append("g").selectAll("g").data(chords.groups).join("g");
+
+        g.append("path")
+            .attr("d", arc)
+            .attr("fill", (d) => clusterColorScale(d.name))
+            .attr("stroke", "#fff");
+
+        g.append("text")
+            .attr("dy", -3)
+            .append("textPath")
+            .attr("xlink:href", `#${textId}`)
+            .attr("startOffset", (d) => d.startAngle * outerRadius)
+            .text((d) => names[d.index]);
+
+        g.append("title").text((d) => {
+            const out = d3.sum(matrix[d.index]);
+            const _in = d3.sum(matrix, (row) => row[d.index]);
+            return `${names[d.index]}
+→ others: ${formatValue(out)}
+← from others: ${formatValue(_in)}`;
+        });
+    }
+
     onMount(async () => {
         currentCluster = availableClusters[0];
     });
@@ -595,150 +972,173 @@
 <Tabs
     bind:value={group}
     onValueChange={(e) => (group = e.value)}
-    class="w-full h-full max-h-full"
+    class="h-full max-h-full overflow-y-scroll"
 >
     {#snippet list()}
-        {#each groups as g}
-            <Tabs.Control value={g}>{g}</Tabs.Control>
-        {/each}
+        <div>
+            {#each groups as g}
+                <Tabs.Control value={g}>{g}</Tabs.Control>
+            {/each}
+        </div>
     {/snippet}
 
     {#snippet content()}
-        {#each groups as g}
-            <Tabs.Panel value={g} class="max-h-full h-full">
-                <div class="h-full overflow-y-scroll max-h-full">
-                    {#if g === "Overview"}
-                        <div bind:this={umapDiv}></div>
-                        <div bind:this={violinDiv}></div>
-                    {:else if g === "Cluster"}
-                        <div
-                            bind:this={donutDiv}
-                            class="w-full max-w-full"
-                        ></div>
-                    {:else if g === "Log" && allLog}
-                        <div class="table-wrap">
-                            <table class="table caption-bottom text-xs w-full">
-                                <thead>
-                                    <tr>
-                                        <th>Barcode</th>
-                                        <th>Prev</th>
-                                        <th>New</th>
-                                    </tr>
-                                </thead>
-                                <tbody
-                                    class="[&>tr]:hover:preset-tonal-primary"
+        <div class="overflow-y-scroll scrollbar-none max-h-full h-full">
+            {#each groups as g}
+                <Tabs.Panel value={g} class="max-h-full h-full">
+                    <div class="h-full overflow-y-scroll max-h-full">
+                        {#if g === "Overview"}
+                            <div bind:this={umapDiv}></div>
+                            <div bind:this={violinDiv}></div>
+                        {:else if g === "Cluster"}
+                            <div
+                                bind:this={donutDiv}
+                                class="w-full max-w-full"
+                            ></div>
+                        {:else if g === "Log" && allLog}
+                            <div class="table-wrap">
+                                <table
+                                    class="table caption-bottom text-xs w-full"
                                 >
-                                    {#each allLog as row, i}
-                                        <tr
-                                            class="cursor-pointer"
-                                            on:click={() =>
-                                                (expandedIndex =
-                                                    expandedIndex === i
-                                                        ? null
-                                                        : i)}
-                                        >
-                                            <td>{row.barcode}</td>
-                                            <td>{row.old_cluster}</td>
-                                            <td>{row.new_cluster}</td>
+                                    <thead>
+                                        <tr>
+                                            <th>Barcode</th>
+                                            <th>Prev</th>
+                                            <th>New</th>
                                         </tr>
-                                        {#if expandedIndex === i}
-                                            <tr class="bg-muted/30 text-sm">
-                                                <td colspan="3">
-                                                    <div>
-                                                        <strong>Comment:</strong
-                                                        >
-                                                        {row.comment || "-"}
-                                                    </div>
-                                                    <div>
-                                                        <strong>Time:</strong>
-                                                        {row.updated_at}
-                                                    </div>
-                                                </td>
+                                    </thead>
+                                    <tbody
+                                        class="[&>tr]:hover:preset-tonal-primary"
+                                    >
+                                        {#each allLog as row, i}
+                                            <tr
+                                                class="cursor-pointer"
+                                                on:click={() =>
+                                                    (expandedIndex =
+                                                        expandedIndex === i
+                                                            ? null
+                                                            : i)}
+                                            >
+                                                <td>{row.barcode}</td>
+                                                <td>{row.old_cluster}</td>
+                                                <td>{row.new_cluster}</td>
                                             </tr>
-                                        {/if}
-                                    {/each}
-                                </tbody>
-                                <tfoot>
-                                    <tr>
-                                        <td colspan="2">Total</td>
-                                        <td class="text-right"
-                                            >{allLog.length}</td
-                                        >
-                                    </tr>
-                                </tfoot>
-                            </table>
-                        </div>
-                    {:else}
-                        <div
-                            class="w-full flex flex-col items-center space-y-4"
-                        >
-                            <div class="w-full flex flex-row gap-6 items-end">
-                                <!-- Cluster 选择器 -->
-                                <div class="w-64 flex flex-col space-y-1">
-                                    <label
-                                        class="text-sm font-medium text-gray-700"
-                                        >Cluster</label
-                                    >
-                                    <select
-                                        class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:ring-2 focus:ring-stone-400"
-                                        bind:value={currentCluster}
-                                    >
-                                        {#each availableClusters as c}
-                                            <option value={c}>{c}</option>
+                                            {#if expandedIndex === i}
+                                                <tr class="bg-muted/30 text-sm">
+                                                    <td colspan="3">
+                                                        <div>
+                                                            <strong
+                                                                >Comment:</strong
+                                                            >
+                                                            {row.comment || "-"}
+                                                        </div>
+                                                        <div>
+                                                            <strong
+                                                                >Time:</strong
+                                                            >
+                                                            {row.updated_at}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            {/if}
                                         {/each}
-                                    </select>
-                                </div>
-
-                                <!-- Gene Mode Segment Control -->
-                                <div class="flex flex-col space-y-1">
-                                    {#if !hvg[currentCluster]}
-                                        <button
-                                            type="button"
-                                            class="btn preset-filled"
-                                            on:click={getHvg}>Analyse</button
-                                        >
-                                    {:else}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colspan="2">Total</td>
+                                            <td class="text-right"
+                                                >{allLog.length}</td
+                                            >
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        {:else if g === "SVG" && hvg}
+                            <div
+                                class="w-full flex flex-col items-center space-y-4"
+                            >
+                                <div
+                                    class="w-full flex flex-row gap-6 items-end"
+                                >
+                                    <!-- Cluster 选择器 -->
+                                    <div class="w-64 flex flex-col space-y-1">
                                         <label
                                             class="text-sm font-medium text-gray-700"
-                                            >Chart Type</label
+                                            >Cluster</label
                                         >
-                                        <Segment
-                                            name="size"
-                                            value={currentGeneMode}
-                                            onValueChange={(e) =>
-                                                (currentGeneMode = e.value)}
-                                            class="w-full flex"
+                                        <select
+                                            class="w-full border border-gray-300 rounded px-3 py-2 bg-white focus:ring-2 focus:ring-stone-400"
+                                            bind:value={currentCluster}
                                         >
-                                            {#each GeneMode as gm}
-                                                <Segment.Item value={gm}
-                                                    >{gm}</Segment.Item
-                                                >
+                                            {#each availableClusters as c}
+                                                <option value={c}>{c}</option>
                                             {/each}
-                                        </Segment>
+                                        </select>
+                                    </div>
+
+                                    <!-- Gene Mode Segment Control -->
+                                    <div class="flex flex-col space-y-1">
+                                        {#if !hvg[currentCluster]}
+                                            <button
+                                                type="button"
+                                                class="btn preset-filled"
+                                                on:click={getHvg}
+                                                >Analyse</button
+                                            >
+                                        {:else}
+                                            <label
+                                                class="text-sm font-medium text-gray-700"
+                                                >Chart Type</label
+                                            >
+                                            <Segment
+                                                name="size"
+                                                value={currentGeneMode}
+                                                onValueChange={(e) =>
+                                                    (currentGeneMode = e.value)}
+                                                class="w-full flex"
+                                            >
+                                                {#each GeneMode as gm}
+                                                    <Segment.Item value={gm}
+                                                        >{gm}</Segment.Item
+                                                    >
+                                                {/each}
+                                            </Segment>
+                                        {/if}
+                                    </div>
+                                </div>
+
+                                <!-- Chart Display Area -->
+                                <div class="w-full max-w-5xl">
+                                    {#if hvg[currentCluster]}
+                                        {#if currentGeneMode === "Bar"}
+                                            <div
+                                                bind:this={barChartDiv}
+                                                class="w-full h-full"
+                                            ></div>
+                                        {:else}
+                                            <div
+                                                bind:this={sankeyDiv}
+                                                class="w-full h-full"
+                                            ></div>
+                                        {/if}
                                     {/if}
                                 </div>
                             </div>
-
-                            <!-- Chart Display Area -->
-                            <div class="w-full max-w-5xl">
-                                {#if hvg[currentCluster]}
-                                    {#if currentGeneMode === "Bar"}
-                                        <div
-                                            bind:this={barChartDiv}
-                                            class="w-full h-full"
-                                        ></div>
-                                    {:else}
-                                        <div
-                                            bind:this={sankeyDiv}
-                                            class="w-full h-full"
-                                        ></div>
-                                    {/if}
-                                {/if}
-                            </div>
-                        </div>
-                    {/if}
-                </div>
-            </Tabs.Panel>
-        {/each}
+                        {:else if g === "Spatial Communication" && cellChat}
+                            <div>cluster</div>
+                            <div
+                                bind:this={cellChatDiv}
+                                class="w-full max-w-full"
+                            ></div>
+                            <div>Ligand and Receptor</div>
+                            <div
+                                bind:this={ligandReceptorDiv}
+                                class="w-full max-w-full"
+                            ></div>
+                        {/if}
+                    </div>
+                </Tabs.Panel>
+            {/each}
+        </div>
     {/snippet}
 </Tabs>

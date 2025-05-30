@@ -17,6 +17,7 @@
     let reclustered = false;
     let reclusering = false;
     let expandedIndex = null;
+    let lasssoHover = null;
 
     $: if (clickedInfo && reclustered) {
         const hasOriginal = clickedInfo?.[0]?.original_cluster !== undefined;
@@ -155,6 +156,12 @@
                             on:click={() => {
                                 expandedIndex = expandedIndex === i ? null : i;
                                 currentRow = row;
+                            }}
+                            on:mouseenter={() => {
+                                dispatch("lassoHover", {
+                                    barcode: row.barcode,
+                                    newCluster: row.new_cluster,
+                                });
                             }}
                         >
                             <td>{row.barcode}</td>

@@ -6,7 +6,7 @@ os.environ["NUMBA_THREADING_LAYER"] = "workqueue"
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import squidpy as sq
 import scanpy as sc
@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from GraphST.utils import clustering
 from GraphST import GraphST
 from sqlalchemy.dialects.mysql import insert as mysql_insert
+from scipy.spatial import Delaunay
 
 
 load_dotenv()
@@ -266,11 +267,12 @@ def run_clustering(request: ClusteringRequest):
     根据前端设置的聚类方法和参数进行聚类
     '''
     global adata
+    adata_local = adata.copy()
     if adata is None:
         raise HTTPException(status_code=500, detail="adata 未加载")
 
     # 👇 执行 GraphST 聚类
-    adata = run_graphst_and_clustering(adata, n_clusters=request.n_clusters, method=request.method,epoch=request.epoch)
+    adata_local = run_graphst_and_clustering(adata_local, n_clusters=request.n_clusters, method=request.method,epoch=request.epoch)
 
     # ✅ 批量更新数据库
     metadata = MetaData()
@@ -280,9 +282,9 @@ def run_clustering(request: ClusteringRequest):
 
     # 👇 构造批量更新数据（列表形式）
     update_data = []
-    for i, (barcode, row) in enumerate(adata.obs.iterrows()):
+    for i, (barcode, row) in enumerate(adata_local.obs.iterrows()):
         cluster = f"{float(row['domain']):.1f}"
-        emb_vec = adata.obsm["emb"][i]
+        emb_vec = adata_local.obsm["emb"][i]
         emb_str = ",".join(map(str, emb_vec))
         update_data.append({
             "barcode": barcode,
@@ -494,11 +496,12 @@ def get_plot_data(slice_id: str = Query(...)):
 @app.get("/expression/{barcode}")
 def get_expression(barcode: str):
     global adata
+    adata_local = adata.copy()
     if barcode not in adata.obs_names:
         raise HTTPException(status_code=404, detail="Barcode not found")
-    i = adata.obs_names.get_loc(barcode)
-    gene_names = adata.var_names.tolist()
-    expr = adata.X[i].toarray().flatten() if hasattr(adata.X, "toarray") else adata.X[i]
+    i = adata_local.obs_names.get_loc(barcode)
+    gene_names = adata_local.var_names.tolist()
+    expr = adata_local.X[i].toarray().flatten() if hasattr(adata_local.X, "toarray") else adata_local.X[i]
     return dict(zip(gene_names, map(float, expr)))
 
 
@@ -896,28 +899,29 @@ def extract_features(adata, barcodes=None, use_hvg_only=True, n_pcs=20):
 @app.get("/umap-coordinates")
 def get_umap_coordinates(slice_id: str = Query(...)):
     global adata
+    adata_local = adata.copy()
 
-    if "X_umap" not in adata.obsm:
-        sc.pp.normalize_total(adata)
-        sc.pp.log1p(adata)
-        sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=2000)
-        adata = adata[:, adata.var.highly_variable]
-        sc.pp.pca(adata)
+    if "X_umap" not in adata_local.obsm:
+        sc.pp.normalize_total(adata_local)
+        sc.pp.log1p(adata_local)
+        sc.pp.highly_variable_genes(adata_local, flavor="seurat", n_top_genes=2000)
+        adata_local = adata_local[:, adata_local.var.highly_variable]
+        sc.pp.pca(adata_local)
         # 使用 adata.obsm["emb"] 构建邻接图
-        sc.pp.neighbors(adata, use_rep="emb")
+        sc.pp.neighbors(adata_local, use_rep="emb")
 
         # 基于该邻接图计算 UMAP
-        sc.tl.umap(adata)
+        sc.tl.umap(adata_local)
 
     
     df = pd.DataFrame(
-        adata.obsm["X_umap"],
-        index=adata.obs_names,  
+        adata_local.obsm["X_umap"],
+        index=adata_local.obs_names,  
         columns=["UMAP_1", "UMAP_2"]
     )
 
     df["barcode"] = df.index
-    df["cluster"] = adata.obs.loc[df.index, "domain"].astype(str)
+    df["cluster"] = adata_local.obs.loc[df.index, "domain"].astype(str)
 
     
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -1113,3 +1117,131 @@ def hvg_enrichment_by_clusters(cluster:str = Query(...)):
     all_clusters_results[cluster] = top_results
     
     return all_clusters_results
+
+@app.get("/cellchat")
+def cell_chat():
+    global adata
+    print("Shape:", adata.shape)
+    print("var_names:", adata.var_names.tolist()[:10])  # 只看前10个
+    adata_copy = adata.copy()
+
+
+    cluster_labels = adata_copy.obs["domain"]
+    unique_clusters = np.unique(cluster_labels)
+    n_clusters = len(unique_clusters)
+
+
+    spatial_coords = adata_copy.obsm['spatial']
+    tri = Delaunay(spatial_coords)
+    edges = set()
+    for simplex in tri.simplices:
+        for i in range(len(simplex)):
+            for j in range(i + 1, len(simplex)):
+                edges.add((simplex[i], simplex[j]))
+                edges.add((simplex[j], simplex[i]))  
+
+
+    n_cells = adata_copy.n_obs
+    adj_matrix = np.zeros((n_cells, n_cells), dtype=bool)
+    for i, j in edges:
+        adj_matrix[i, j] = True
+
+
+    cluster_interaction_matrix = np.zeros((n_clusters, n_clusters))
+    cluster_mapping = {cluster: idx for idx, cluster in enumerate(unique_clusters)}
+
+    for i in range(n_cells):
+        for j in range(n_cells):
+            if adj_matrix[i, j]:
+                source_cluster = cluster_labels[i]
+                target_cluster = cluster_labels[j]
+                source_idx = cluster_mapping[source_cluster]
+                target_idx = cluster_mapping[target_cluster]
+                cluster_interaction_matrix[source_idx, target_idx] += 1
+
+    for i in range(n_clusters):
+        source_cluster = unique_clusters[i]
+        n_cells_in_source = np.sum(cluster_labels == source_cluster)
+        if n_cells_in_source > 0:  # 避免除以零
+            cluster_interaction_matrix[i, :] /= n_cells_in_source
+
+
+    lr_pairs = [
+        ('TGFB1', 'TGFBR1'), ('TGFB1', 'TGFBR2'),
+        ('CD274', 'PDCD1'), ('PDCD1LG2', 'PDCD1'),
+        ('CD40LG', 'CD40'), ('IL2', 'IL2RA'),
+        ('IL7', 'IL7R'), ('IFNG', 'IFNGR1'),
+        ('TNF', 'TNFRSF1A'), ('TNF', 'TNFRSF1B'),
+        ('VEGFA', 'KDR'), ('VEGFA', 'FLT1')
+    ]
+
+
+    all_genes = set(adata_copy.var_names)
+    valid_lr_pairs = []
+    for ligand, receptor in lr_pairs:
+        if ligand in all_genes and receptor in all_genes:
+            valid_lr_pairs.append((ligand, receptor))
+
+    if not valid_lr_pairs:
+        print("没有找到匹配的配体-受体对，请更新列表或检查基因名称格式")
+    else:
+
+        lr_cluster_exp = {}
+        for cluster in unique_clusters:
+            cells_in_cluster = cluster_labels == cluster
+            cluster_expr = adata_copy[cells_in_cluster].X
+            
+
+            if isinstance(cluster_expr, np.ndarray):
+                pass
+            else: 
+                cluster_expr = cluster_expr.toarray()
+            
+            lr_cluster_exp[cluster] = {}
+            for gene in set(sum(valid_lr_pairs, ())):
+                if gene in all_genes:
+                    gene_idx = list(adata_copy.var_names).index(gene)
+                    lr_cluster_exp[cluster][gene] = np.mean(cluster_expr[:, gene_idx])
+
+        lr_interaction_scores = []
+        for source_cluster in unique_clusters:
+            for target_cluster in unique_clusters:
+                if source_cluster == target_cluster:
+                    continue  
+                    
+                for ligand, receptor in valid_lr_pairs:
+                    if ligand in lr_cluster_exp[source_cluster] and receptor in lr_cluster_exp[target_cluster]:
+                        ligand_exp = lr_cluster_exp[source_cluster][ligand]
+                        receptor_exp = lr_cluster_exp[target_cluster][receptor]
+                        
+                
+                        interaction_score = ligand_exp * receptor_exp
+                        
+                        lr_interaction_scores.append({
+                            'source_cluster': source_cluster,
+                            'target_cluster': target_cluster,
+                            'ligand': ligand,
+                            'receptor': receptor,
+                            'ligand_exp': ligand_exp,
+                            'receptor_exp': receptor_exp,
+                            'interaction_score': interaction_score
+                        })
+
+
+        lr_df = pd.DataFrame(lr_interaction_scores)
+        lr_df = lr_df.sort_values('interaction_score', ascending=False)
+        
+
+        top_n = 30  
+        if len(lr_df) > top_n:
+            top_interactions = lr_df.head(top_n)
+        else:
+            top_interactions = lr_df
+
+        cluster_pair_scores = lr_df.groupby(['source_cluster', 'target_cluster'])['interaction_score'].sum().reset_index()
+        
+    
+        # lr_df.to_csv('ligand_receptor_interactions.csv', index=False)
+        # cluster_pair_scores.to_csv('cluster_interaction_scores.csv', index=False)
+        
+        return top_interactions.to_dict(orient="records")

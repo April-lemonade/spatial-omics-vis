@@ -9,6 +9,7 @@
     export let imageUrl;
     export let clusterColorScale;
     export let hoveredBarcode;
+    export let lassoHover;
     let lassoSelected = false;
 
     let clusterEdit = false;
@@ -340,6 +341,48 @@
                 });
             }
         }
+    }
+
+    function findPointByBarcode(barcode) {
+        for (let i = 0; i < spatialData.length; i++) {
+            const trace = spatialData[i];
+            const barcodes = trace.customdata || trace.text || [];
+
+            const index = barcodes.indexOf(barcode);
+            if (index !== -1) {
+                return {
+                    traceIndex: i,
+                    pointIndex: index,
+                    x: trace.x[index],
+                    y: trace.y[index],
+                    cluster: trace.name,
+                };
+            }
+        }
+        return null;
+    }
+
+    $: if (lassoHover && spatialDiv) {
+        const p = findPointByBarcode(lassoHover.barcode);
+        console.log(p);
+
+        // const p = spatialData.
+        Plotly.relayout(spatialDiv, {
+            annotations: [
+                {
+                    x: p.x,
+                    y: p.y,
+                    text: `${p.cluster}->${lassoHover.newCluster}`,
+                    showarrow: true,
+                    arrowhead: 1,
+                    ax: 0,
+                    ay: -40,
+                    bgcolor: "white",
+                    bordercolor: "",
+                    borderwidth: 1,
+                },
+            ],
+        });
     }
 
     onMount(() => {

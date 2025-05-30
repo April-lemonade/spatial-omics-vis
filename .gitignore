@@ -7,6 +7,7 @@ __pycache__/
 .env
 .idea/
 VT3D.py
+cellchat.py
 151673/
 *_changed_details.csv
 *_prediction_details.csv

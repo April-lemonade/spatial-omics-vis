@@ -37,6 +37,8 @@
     let epoch = 500;
     let n_clusters = 7;
     let umapData;
+    let cellChat;
+    let lassoHover;
 
     async function fecthUmapData() {
         const response = await fetch(
@@ -59,13 +61,14 @@
         await new Promise((resolve) => (image.onload = resolve));
 
         // 用当前切片 ID 获取 plot-data 和 slice-info
-        const [plotRes, infoRes, ncountRes, metricsRes, logRes] =
+        const [plotRes, infoRes, ncountRes, metricsRes, logRes, cellChatRes] =
             await Promise.all([
                 fetch(`${baseApi}/plot-data?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/slice-info?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/ncount_by_cluster?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/spot-metrics?slice_id=${currentSlice}`),
                 fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
+                fetch(`${baseApi}/cellchat`),
             ]);
 
         const plotData = await plotRes.json();
@@ -73,6 +76,7 @@
         const ncountData = await ncountRes.json();
         const metricsData = await metricsRes.json();
         const logData = await logRes.json();
+        const cellChatData = await cellChatRes.json();
 
         if (sliceInfo.cluster_method !== "not_clustered") {
             umapData = await fecthUmapData();
@@ -84,6 +88,7 @@
             ncountData,
             metricsData,
             logData,
+            cellChatData,
         };
     }
 
@@ -195,8 +200,14 @@
     }
 
     async function refreshSpatialState() {
-        const { ncountData, plotData, sliceInfo, metricsData, logData } =
-            await fetchSpatial();
+        const {
+            ncountData,
+            plotData,
+            sliceInfo,
+            metricsData,
+            logData,
+            cellChatData,
+        } = await fetchSpatial();
 
         spatialData = plotData;
         spatialInfo = sliceInfo;
@@ -206,6 +217,7 @@
         ncountSpatialData = ncountData;
         spotMetricsData = metricsData;
         allLog = logData;
+        cellChat = cellChatData;
 
         updateClusterMeta(plotData);
     }
@@ -394,6 +406,7 @@
                 {clusterColorScale}
                 {lassoSelected}
                 {hoveredBarcode}
+                {lassoHover}
                 on:spotClick={(e) => handleSpotClick(e.detail)}
                 on:hover={(e) => {
                     hoveredBarcode = {
@@ -443,6 +456,10 @@
                             {currentSlice}
                             on:acceptRecluster={(e) =>
                                 handleClusterUpdate(e.detail)}
+                            on:lassoHover={(e) => {
+                                lassoHover = e.detail;
+                                console.log("main", e.detail);
+                            }}
                         ></Lassomode>
                     </div>
                 {:else if clickedInfo}
@@ -466,6 +483,7 @@
                         {hvg}
                         {availableClusters}
                         {umapData}
+                        {cellChat}
                         on:hover={(e) => {
                             hoveredBarcode = {
                                 barcode: e.detail.barcode,
