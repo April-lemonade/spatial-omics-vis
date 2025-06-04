@@ -177,6 +177,12 @@
                                     newCluster: row.new_cluster,
                                 });
                             }}
+                            on:mouseleave={() => {
+                                dispatch("lassoHover", {
+                                    barcode: "",
+                                    newCluster: "",
+                                });
+                            }}
                         >
                             <td>{row.barcode}</td>
                             <td>{row.original_cluster}</td>

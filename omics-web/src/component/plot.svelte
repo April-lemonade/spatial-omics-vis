@@ -365,24 +365,29 @@
     $: if (lassoHover && spatialDiv) {
         const p = findPointByBarcode(lassoHover.barcode);
         console.log(p);
-
+        if (p) {
+            Plotly.relayout(spatialDiv, {
+                annotations: [
+                    {
+                        x: p.x,
+                        y: p.y,
+                        text: `${p.cluster}->${lassoHover.newCluster}`,
+                        showarrow: true,
+                        arrowhead: 1,
+                        ax: 0,
+                        ay: -40,
+                        bgcolor: "white",
+                        bordercolor: "",
+                        borderwidth: 1,
+                    },
+                ],
+            });
+        } else {
+            Plotly.relayout(spatialDiv, {
+                annotations: [],
+            });
+        }
         // const p = spatialData.
-        Plotly.relayout(spatialDiv, {
-            annotations: [
-                {
-                    x: p.x,
-                    y: p.y,
-                    text: `${p.cluster}->${lassoHover.newCluster}`,
-                    showarrow: true,
-                    arrowhead: 1,
-                    ax: 0,
-                    ay: -40,
-                    bgcolor: "white",
-                    bordercolor: "",
-                    borderwidth: 1,
-                },
-            ],
-        });
     }
 
     onMount(() => {
