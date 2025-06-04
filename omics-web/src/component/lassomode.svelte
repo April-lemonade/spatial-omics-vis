@@ -31,14 +31,17 @@
         }
     }
 
-    $: if (result) {
-        filteredResults = state
-            ? result.filter((item) => item.changed === true)
-            : result;
-        // if (state) {
-        //     const filtered = result.filter(item => item.changed === true);
-        // } else
-    }
+    // $: if (result) {
+    //     filteredResults = state
+    //         ? result.filter((item) => item.changed === true)
+    //         : result;
+    //     // if (state) {
+    //     //     const filtered = result.filter(item => item.changed === true);
+    //     // } else
+    // }
+
+    $: filteredResults =
+        result && state ? result.filter((item) => item.changed) : result;
 
     async function recluster() {
         reclusering = true;
@@ -172,6 +175,7 @@
                                 currentRow = row;
                             }}
                             on:mouseenter={() => {
+                                console.log("table", row);
                                 dispatch("lassoHover", {
                                     barcode: row.barcode,
                                     newCluster: row.new_cluster,
@@ -193,7 +197,7 @@
                                         class="btn btn-sm preset-filled"
                                         on:click={(e) => {
                                             e.stopPropagation();
-                                            acceptRecluster(result[i]);
+                                            acceptRecluster(filteredResults[i]);
                                         }}
                                     >
                                         &check;
@@ -221,7 +225,7 @@
                 <tfoot>
                     <tr>
                         <td colspan="3">Total</td>
-                        <td class="text-right">{clickedInfo.length}</td>
+                        <td class="text-right">{filteredResults.length}</td>
                     </tr>
                 </tfoot>
             </table>

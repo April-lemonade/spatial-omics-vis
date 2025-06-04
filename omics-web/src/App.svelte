@@ -150,18 +150,20 @@
                 fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
             ]);
 
-            spatialData = await updatedPlotRes.json();
-            allLog = await updatedLogRes.json();
-
             // ✅ 更新当前点击的点的聚类
             clickedInfo.cluster = info.newCluster;
             // clickedInfo.changed = false;
+
             if (lassoSelected) {
                 if (info.remainingChangedCount === 0) {
                     lassoSelected = false;
                     clickedInfo = null;
                 }
             }
+
+            const newData = await updatedPlotRes.json();
+            spatialData = JSON.parse(JSON.stringify(newData)); // 强制换引用
+            allLog = await updatedLogRes.json();
         }
 
         //  spatialData 中的点

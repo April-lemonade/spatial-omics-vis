@@ -10,7 +10,7 @@
     export let clusterColorScale;
     export let hoveredBarcode;
     export let lassoHover;
-    let lassoSelected = false;
+    export let lassoSelected = false;
 
     let clusterEdit = false;
     let availableClusters = [];
@@ -20,7 +20,8 @@
     let image;
     const dispatch = createEventDispatcher();
     let resizeObserver;
-
+    let selectedBarcodes = [];
+    let prevSelectedBarcodes = [];
     let plotInstance = null;
 
     // 图像加载后才可绘制图层背景
@@ -40,6 +41,7 @@
     }
 
     $: if (spatialData && !plotInstance) {
+        selectedBarcodes = lassoSelected ? prevSelectedBarcodes : [];
         drawPlot();
     }
 
@@ -88,6 +90,13 @@
                 hoveredBarcode?.barcode !== "" &&
                 hoveredBarcode?.barcode !== -1;
 
+            let selectedIndices = null;
+            if (lassoSelected && selectedBarcodes.length > 0) {
+                selectedIndices = barcodes
+                    .map((bc, i) => (selectedBarcodes.includes(bc) ? i : -1))
+                    .filter((i) => i !== -1);
+            }
+
             return {
                 ...trace,
                 marker: {
@@ -97,7 +106,9 @@
                 },
                 name: `Cluster ${trace.name}`,
                 selectedpoints:
-                    isHovering && hoveredIndex !== -1 ? [hoveredIndex] : null,
+                    isHovering && hoveredIndex !== -1
+                        ? [hoveredIndex]
+                        : selectedIndices,
                 selected: { marker: { opacity: 1 } },
                 unselected: { marker: { opacity: 0.2 } },
             };
@@ -142,6 +153,8 @@
                     const barcodes = eventData.points.map(
                         (pt) => pt.customdata,
                     );
+                    selectedBarcodes = barcodes;
+                    prevSelectedBarcodes = barcodes;
                     console.log("Selected barcodes:", barcodes);
 
                     plotInstance.data.forEach((_, i) => {
@@ -183,6 +196,7 @@
             lassoPaths.forEach((path) => path.remove());
             lassoCircles.forEach((circle) => circle.remove());
             lassoRects.forEach((rect) => rect.remove());
+            selectedBarcodes = [];
         });
 
         plotInstance.on("plotly_click", async (eventData) => {
