@@ -2,6 +2,7 @@
     import { ProgressRing } from "@skeletonlabs/skeleton-svelte";
     import { createEventDispatcher, tick } from "svelte";
     import Plotly from "plotly.js-dist-min";
+    import { Switch } from "@skeletonlabs/skeleton-svelte";
 
     export let currentSlice;
     export let baseApi;
@@ -18,6 +19,8 @@
     let reclusering = false;
     let expandedIndex = null;
     let lasssoHover = null;
+    let state = false;
+    let filteredResults;
 
     $: if (clickedInfo && reclustered) {
         const hasOriginal = clickedInfo?.[0]?.original_cluster !== undefined;
@@ -26,6 +29,15 @@
             reclusering = false;
             expandedIndex = null;
         }
+    }
+
+    $: if (result) {
+        filteredResults = state
+            ? result.filter((item) => item.changed === true)
+            : result;
+        // if (state) {
+        //     const filtered = result.filter(item => item.changed === true);
+        // } else
     }
 
     async function recluster() {
@@ -130,13 +142,15 @@
 
 <div class="h-full">
     {#if reclustered && !reclusering && clickedInfo}
-        <!-- <nav
-            class="btn-group preset-outlined-surface-200-800 flex-col p-2 md:flex-row"
-        >
-            <button type="button" class="btn preset-filled">All</button>
-            <button type="button" class="btn hover:preset-tonal">Changed</button
-            >
-        </nav> -->
+        <div class="flex justify-end items-center space-x-2 w-full">
+            <span class="text-sm text-gray-700">Changed Only</span>
+            <Switch
+                name="example"
+                checked={state}
+                onCheckedChange={(e) => (state = e.checked)}
+            />
+        </div>
+
         <div class="table-wrap">
             <table class="table caption-bottom text-xs w-full h-full">
                 <thead>
@@ -148,7 +162,7 @@
                     </tr>
                 </thead>
                 <tbody class="[&>tr]:hover:preset-tonal-primary">
-                    {#each result as row, i}
+                    {#each filteredResults as row, i}
                         <tr
                             class="cursor-pointer {row.changed
                                 ? 'bg-red-100'
