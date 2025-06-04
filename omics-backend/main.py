@@ -273,6 +273,8 @@ def run_clustering(request: ClusteringRequest):
 
     # 👇 执行 GraphST 聚类
     adata_local = run_graphst_and_clustering(adata_local, n_clusters=request.n_clusters, method=request.method,epoch=request.epoch)
+    
+    adata = adata_local
 
     # ✅ 批量更新数据库
     metadata = MetaData()

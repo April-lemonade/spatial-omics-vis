@@ -217,7 +217,7 @@
         ncountSpatialData = ncountData;
         spotMetricsData = metricsData;
         allLog = logData;
-        cellChat = cellChatData;
+        cellChat = JSON.parse(JSON.stringify(cellChatData)); // 或者结构复制
 
         updateClusterMeta(plotData);
     }
@@ -238,6 +238,10 @@
     }
 
     async function iniCluster() {
+        ncountSpatialData = null;
+        spotMetricsData = null;
+        allLog = null;
+        cellChat = null;
         spatialData = null;
         hvg = {};
         umapData = null;
@@ -272,7 +276,7 @@
     });
 </script>
 
-{#if !spatialData}
+{#if !spatialData || !cellChat}
     <div
         class="fixed inset-0 z-50 flex justify-center items-center bg-white/80"
     >
