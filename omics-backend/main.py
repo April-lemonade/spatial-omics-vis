@@ -27,6 +27,7 @@ from GraphST.utils import clustering
 from GraphST import GraphST
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from scipy.spatial import Delaunay
+from scipy.stats import zscore
 
 
 load_dotenv()
@@ -506,7 +507,144 @@ def get_expression(barcode: str):
     expr = adata_local.X[i].toarray().flatten() if hasattr(adata_local.X, "toarray") else adata_local.X[i]
     return dict(zip(gene_names, map(float, expr)))
 
+@app.get("/expression-by-cluster")
+def get_expression_by_cluster(cluster: str = Query(...), cluster_field: str = "cluster"):
+    global adata
+    adata_local = adata.copy()
 
+    if cluster_field not in adata_local.obs:
+        raise HTTPException(status_code=400, detail=f"Field '{cluster_field}' not found in .obs")
+
+    if cluster not in adata_local.obs[cluster_field].astype(str).unique():
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster}' not found")
+
+    # 获取该 cluster 中的 spot 索引
+    mask = adata_local.obs[cluster_field].astype(str) == cluster
+    if mask.sum() == 0:
+        raise HTTPException(status_code=404, detail=f"No spots found for cluster '{cluster}'")
+
+    # 计算表达矩阵的均值
+    X_cluster = adata_local[mask].X
+    mean_expr = X_cluster.mean(axis=0)
+    if hasattr(mean_expr, "A1"):  # 如果是稀疏矩阵
+        mean_expr = mean_expr.A1
+
+    gene_names = adata_local.var_names.tolist()
+    return dict(zip(gene_names, map(float, mean_expr)))
+
+
+@app.get("/cluster-gene-expression")
+def get_cluster_gene_expression(
+    cluster_field: str = "cluster",
+    method: str = "marker",  # or "hvg"
+    top_n: int = 5
+):
+    global adata
+    adata_local = adata.copy()
+    
+
+    if method == "marker":
+        sc.pp.normalize_total(adata_local, target_sum=1e4)
+        sc.pp.log1p(adata_local)
+        sc.tl.rank_genes_groups(adata_local, groupby=cluster_field, method="t-test", n_genes=top_n*3)
+
+        result = adata_local.uns["rank_genes_groups"]
+        gene_set = set()
+
+        # 选 top_n 且 logfoldchange > 1 的
+        for group in result["names"].dtype.names:
+            names = result["names"][group]
+            lfc = result["logfoldchanges"][group]
+            for g, f in zip(names, lfc):
+                if f > 1.0:
+                    gene_set.add(g)
+                if len(gene_set) >= top_n * len(result["names"].dtype.names):
+                    break
+
+        gene_list = list(gene_set)
+
+    elif method == "hvg":
+        sc.pp.highly_variable_genes(adata_local, n_top_genes=top_n)
+        gene_list = adata_local.var_names[adata_local.var["highly_variable"]].tolist()
+
+    else:
+        raise HTTPException(status_code=400, detail="method must be 'marker' or 'hvg'")
+
+    # 取表达值
+    gene_idx = [adata_local.var_names.get_loc(g) for g in gene_list]
+    X = adata_local[:, gene_idx].X
+    X_dense = X.toarray() if hasattr(X, "toarray") else X
+
+    # 按 gene 做 z-score
+    X_scaled = zscore(X_dense, axis=1, nan_policy='omit')
+    X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+    
+
+    return {
+        "genes": gene_list,
+        "barcodes": adata_local.obs_names.tolist(),
+        "clusters": adata_local.obs[cluster_field].astype(str).tolist(),
+        "expression": X_scaled.tolist()
+    }
+    
+@app.get("/cluster_gene_dotplot")
+def get_dotplot_data(
+    cluster_field: str = "cluster",
+    top_n: int = 30,
+    method: str = "hvg"  # or 'marker'
+):
+    global adata
+    adata_local = adata.copy()
+    adata_local.var_names_make_unique()
+
+    # Normalize and log
+    sc.pp.normalize_total(adata_local, target_sum=1e4)
+    sc.pp.log1p(adata_local)
+
+    # 选 gene 列表
+    if method == "hvg":
+        sc.pp.highly_variable_genes(adata_local, n_top_genes=top_n)
+        gene_list = adata_local.var_names[adata_local.var["highly_variable"]].tolist()
+
+    elif method == "marker":
+        sc.tl.rank_genes_groups(adata_local, groupby=cluster_field, method="t-test", n_genes=top_n)
+        top_genes = set()
+        for group in adata_local.uns["rank_genes_groups"]["names"].dtype.names:
+            top_genes.update(adata_local.uns["rank_genes_groups"]["names"][group][:top_n])
+        gene_list = list(top_genes)
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid method")
+
+    clusters = adata_local.obs[cluster_field].astype(str).tolist()
+    cluster_names = sorted(set(clusters), key=lambda x: int(x) if x.isdigit() else x)
+
+    result = []
+
+    for gene in gene_list:
+        if gene not in adata_local.var_names:
+            continue
+        gene_idx = adata_local.var_names.get_loc(gene)
+        expr = adata_local.X[:, gene_idx].toarray().flatten() if hasattr(adata_local.X, "toarray") else adata_local.X[:, gene_idx]
+
+        for cluster in cluster_names:
+            mask = (adata_local.obs[cluster_field].astype(str) == cluster).values
+            expr_cluster = expr[mask]
+            avg_expr = float(np.mean(expr_cluster))
+            pct_expr = float(np.mean(expr_cluster > 0))
+            result.append({
+                "gene": gene,
+                "cluster": cluster,
+                "avg_expr": avg_expr,
+                "pct_expr": pct_expr
+            })
+
+    return {
+        "genes": gene_list,
+        "clusters": cluster_names,
+        "data": result
+    }
+    
 @app.get("/slice-info")
 def get_slice_info(slice_id: str = Query(..., description="Slide ID like 151673")):
     path = f"./data/{slice_id}"

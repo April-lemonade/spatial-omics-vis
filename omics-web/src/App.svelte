@@ -39,6 +39,8 @@
     let umapData;
     let cellChat;
     let lassoHover;
+    let clusterGeneExpression;
+    let clusterGeneDot;
 
     async function fecthUmapData() {
         const response = await fetch(
@@ -61,21 +63,33 @@
         await new Promise((resolve) => (image.onload = resolve));
 
         // 用当前切片 ID 获取 plot-data 和 slice-info
-        const [plotRes, infoRes, ncountRes, metricsRes, logRes, cellChatRes] =
-            await Promise.all([
-                fetch(`${baseApi}/plot-data?slice_id=${currentSlice}`),
-                fetch(`${baseApi}/slice-info?slice_id=${currentSlice}`),
-                fetch(`${baseApi}/ncount_by_cluster?slice_id=${currentSlice}`),
-                fetch(`${baseApi}/spot-metrics?slice_id=${currentSlice}`),
-                fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
-                fetch(`${baseApi}/cellchat`),
-            ]);
+        const [
+            plotRes,
+            infoRes,
+            ncountRes,
+            metricsRes,
+            logRes,
+            clusterGeneRes,
+            clsuterGeneDotRes,
+            cellChatRes,
+        ] = await Promise.all([
+            fetch(`${baseApi}/plot-data?slice_id=${currentSlice}`),
+            fetch(`${baseApi}/slice-info?slice_id=${currentSlice}`),
+            fetch(`${baseApi}/ncount_by_cluster?slice_id=${currentSlice}`),
+            fetch(`${baseApi}/spot-metrics?slice_id=${currentSlice}`),
+            fetch(`${baseApi}/cluster-log?slice_id=${currentSlice}`),
+            fetch(`${baseApi}/cluster-gene-expression`),
+            fetch(`${baseApi}/cluster_gene_dotplot`),
+            fetch(`${baseApi}/cellchat`),
+        ]);
 
         const plotData = await plotRes.json();
         const sliceInfo = await infoRes.json();
         const ncountData = await ncountRes.json();
         const metricsData = await metricsRes.json();
         const logData = await logRes.json();
+        const clusterGeneExpressionData = await clusterGeneRes.json();
+        const clusterGeneDotData = await clsuterGeneDotRes.json();
         const cellChatData = await cellChatRes.json();
 
         if (sliceInfo.cluster_method !== "not_clustered") {
@@ -88,6 +102,8 @@
             ncountData,
             metricsData,
             logData,
+            clusterGeneExpressionData,
+            clusterGeneDotData,
             cellChatData,
         };
     }
@@ -120,7 +136,7 @@
         // console.log(detail);
         // console.log("选中了一个 spot:", info.barcode, info);
         clickedInfo = detail.info;
-        clickedInfo.expression = null
+        clickedInfo.expression = null;
         lassoSelected = detail.lassoSelected;
         console.log(clickedInfo);
     }
@@ -209,6 +225,8 @@
             sliceInfo,
             metricsData,
             logData,
+            clusterGeneExpressionData,
+            clusterGeneDotData,
             cellChatData,
         } = await fetchSpatial();
 
@@ -220,6 +238,8 @@
         ncountSpatialData = ncountData;
         spotMetricsData = metricsData;
         allLog = logData;
+        clusterGeneExpression = clusterGeneExpressionData;
+        clusterGeneDot = clusterGeneDotData;
         cellChat = JSON.parse(JSON.stringify(cellChatData)); // 或者结构复制
 
         updateClusterMeta(plotData);
@@ -491,6 +511,8 @@
                         {availableClusters}
                         {umapData}
                         {cellChat}
+                        {clusterGeneExpression}
+                        {clusterGeneDot}
                         on:hover={(e) => {
                             hoveredBarcode = {
                                 barcode: e.detail.barcode,

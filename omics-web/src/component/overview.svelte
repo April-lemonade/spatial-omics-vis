@@ -17,6 +17,8 @@
     export let hvg = {};
     export let availableClusters;
     export let umapData;
+    export let clusterGeneExpression;
+    export let clusterGeneDot;
     const GeneMode = ["Bar", "Sankey"];
     let currentGeneMode = "Bar";
     let hvging = false;
@@ -30,6 +32,9 @@
     let sankeyDiv;
     let cellChatDiv;
     let ligandReceptorDiv;
+    let clusterGeneExpressionDiv;
+    let clusterGeneDotDiv;
+
     let expandedIndex = null;
     let umap;
     let enrichmentResults;
@@ -75,9 +80,17 @@
         drawUMAP();
     }
 
-    $: if (group === "Cluster" && spotMetricsData && donutDiv) {
+    $: if (
+        group === "Cluster" &&
+        spotMetricsData &&
+        donutDiv &&
+        clusterGeneExpressionDiv &&
+        clusterGeneDot
+    ) {
         tick().then(() => {
-            drawDonut(spotMetricsData);
+            drawClusterBar(spotMetricsData);
+            loadHeatmap();
+            drawDotPlot();
         });
     }
 
@@ -169,8 +182,53 @@
         observeResize(violinDiv, () => Plotly.Plots.resize(violinDiv));
     }
 
-    function drawDonut(data) {
-        // 只用一次 cluster 数据，不用重复的 metric
+    // function drawDonut(data) {
+    //     // 只用一次 cluster 数据，不用重复的 metric
+    //     const clusterCounts = {};
+
+    //     data.forEach((d) => {
+    //         if (!clusterCounts[d.cluster]) clusterCounts[d.cluster] = 0;
+    //         clusterCounts[d.cluster]++;
+    //     });
+
+    //     const clusters = Object.keys(clusterCounts).sort((a, b) => +a - +b);
+    //     const values = clusters.map((c) => clusterCounts[c]);
+    //     const labels = clusters.map((c) => ` Cluster ${+c}`); // +1 for display
+
+    //     const colors = clusters.map((c) => clusterColorScale(c));
+    //     const trace = {
+    //         type: "pie",
+    //         labels,
+    //         values,
+    //         hole: 0.5, // Donut hole
+    //         marker: { colors },
+    //         textinfo: "percent",
+    //         hoverinfo: "label+value",
+    //     };
+
+    //     const layout = {
+    //         title: "Spot Count by Cluster",
+    //         margin: { l: 0, r: 0, t: 0, b: 0 },
+    //         showlegend: false,
+    //         autosize: true,
+    //         width: donutDiv.clientWidth / 2,
+    //     };
+
+    //     Plotly.newPlot(donutDiv, [trace], layout, {
+    //         responsive: true,
+    //         useResizeHandler: true,
+    //         displaylogo: false,
+    //         modeBarButtons: [[]],
+    //     });
+
+    //     observeResize(donutDiv, () => Plotly.Plots.resize(donutDiv));
+
+    //     window.addEventListener("resize", () => {
+    //         Plotly.Plots.resize(donutDiv);
+    //     });
+    // }
+
+    function drawClusterBar(data) {
         const clusterCounts = {};
 
         data.forEach((d) => {
@@ -179,29 +237,28 @@
         });
 
         const clusters = Object.keys(clusterCounts).sort((a, b) => +a - +b);
-        const values = clusters.map((c) => clusterCounts[c]);
-        const labels = clusters.map((c) => ` Cluster ${+c}`); // +1 for display
 
-        const colors = clusters.map((c) => clusterColorScale(c));
-        const trace = {
-            type: "pie",
-            labels,
-            values,
-            hole: 0.5, // Donut hole
-            marker: { colors },
-            textinfo: "percent",
-            hoverinfo: "label+value",
-        };
+        const traces = clusters.map((c) => ({
+            type: "bar",
+            name: `Cluster ${c}`,
+            y: ["Clusters"],
+            x: [clusterCounts[c]],
+            orientation: "h",
+            marker: { color: clusterColorScale(c) },
+            hovertemplate: `Cluster ${c}<br>Count: ${clusterCounts[c]}<extra></extra>`,
+        }));
 
         const layout = {
+            barmode: "stack",
             title: "Spot Count by Cluster",
             margin: { l: 0, r: 0, t: 0, b: 0 },
             showlegend: false,
-            autosize: true,
-            width: donutDiv.clientWidth / 2,
+            height: 50,
+            xaxis: { visible: false },
+            yaxis: { visible: false },
         };
 
-        Plotly.newPlot(donutDiv, [trace], layout, {
+        Plotly.newPlot(donutDiv, traces, layout, {
             responsive: true,
             useResizeHandler: true,
             displaylogo: false,
@@ -209,9 +266,168 @@
         });
 
         observeResize(donutDiv, () => Plotly.Plots.resize(donutDiv));
-
         window.addEventListener("resize", () => {
             Plotly.Plots.resize(donutDiv);
+        });
+    }
+
+    async function loadHeatmap() {
+        const genes = clusterGeneExpression.genes;
+        const barcodes = clusterGeneExpression.barcodes;
+        const expression = clusterGeneExpression.expression;
+        const clusters = clusterGeneExpression.clusters;
+
+        // 1️⃣ 排序 barcodes / clusters / expression
+        const indices = [...barcodes.keys()].sort((i, j) =>
+            clusters[i].localeCompare(clusters[j]),
+        );
+
+        const sortedBarcodes = indices.map((i) => barcodes[i]);
+        const sortedClusters = indices.map((i) => clusters[i]);
+        const sortedExpression = expression.map((row) =>
+            indices.map((i) => row[i]),
+        );
+
+        // 2️⃣ 计算 cluster 分段 span（用于 color bar）
+        const clusterSpans = [];
+        let prev = sortedClusters[0];
+        let start = 0;
+        for (let i = 1; i <= sortedClusters.length; i++) {
+            if (sortedClusters[i] !== prev) {
+                clusterSpans.push({ cluster: prev, start, end: i - 1 });
+                prev = sortedClusters[i];
+                start = i;
+            }
+        }
+
+        // 3️⃣ 构造 heatmap trace
+        const heatmap = {
+            z: sortedExpression,
+            x: sortedBarcodes,
+            y: genes,
+            type: "heatmap",
+            colorscale: "RdBu",
+            zmin: -2,
+            zmax: 2,
+            showscale: true,
+            xgap: 0,
+            ygap: 0,
+        };
+
+        // 4️⃣ 构造 cluster color bar 作为 layout.shapes
+        const shapes = clusterSpans.map((span) => ({
+            type: "rect",
+            xref: "x",
+            yref: "paper",
+            x0: sortedBarcodes[span.start],
+            x1: sortedBarcodes[span.end],
+            y0: 1.01,
+            y1: 1.05,
+            fillcolor: clusterColorScale(span.cluster),
+            line: { width: 0 },
+        }));
+
+        // 5️⃣ 设置 layout，去掉原来的 bar trace 和 yaxis2
+        const layout = {
+            title: "Auto-selected Marker Gene Heatmap",
+            margin: { t: 60, l: 120 },
+            height: 400 + genes.length * 10,
+            xaxis: {
+                tickangle: 90,
+                side: "bottom",
+                showticklabels: false,
+            },
+            yaxis: {
+                autorange: "reversed",
+            },
+            shapes: shapes,
+            showlegend: false,
+        };
+
+        Plotly.newPlot(clusterGeneExpressionDiv, [heatmap], layout, {
+            responsive: true,
+            displayModeBar: false,
+        });
+
+        observeResize(clusterGeneExpressionDiv, () =>
+            Plotly.Plots.resize(clusterGeneExpressionDiv),
+        );
+    }
+
+    function drawDotPlot() {
+        const { genes, clusters, data } = clusterGeneDot;
+
+        // 构建矩阵：avg_expr（颜色） & pct_expr（圆大小）
+        const avgMatrix = clusters.map((cl) =>
+            genes.map((g) => {
+                const entry = data.find(
+                    (d) => d.gene === g && d.cluster === cl,
+                );
+                return entry ? entry.avg_expr : 0;
+            }),
+        );
+
+        const pctMatrix = clusters.map((cl) =>
+            genes.map((g) => {
+                const entry = data.find(
+                    (d) => d.gene === g && d.cluster === cl,
+                );
+                return entry ? entry.pct_expr * 100 : 0;
+            }),
+        );
+
+        const trace = {
+            type: "scatter",
+            mode: "markers",
+            x: genes,
+            y: clusters,
+            marker: {
+                size: pctMatrix.flat(),
+                sizemode: "area",
+                sizeref: (2.0 * Math.max(...pctMatrix.flat())) / 40 ** 2, // 控制最大圆
+                sizemin: 2,
+                color: avgMatrix.flat(),
+                colorscale: "PuBuGn",
+                colorbar: {
+                    title: "Average Expression",
+                },
+            },
+            hovertemplate:
+                "<b>%{y}</b> – %{x}<br>" +
+                "Avg Expr: %{marker.color:.2f}<br>" +
+                "Pct Expr: %{marker.size:.1f}%<extra></extra>",
+        };
+
+        const layout = {
+            title: "Dotplot: Gene Expression per Cluster",
+            xaxis: {
+                title: "Gene",
+                tickangle: -45,
+                automargin: true,
+                autosize: true,
+                width: clusterGeneDotDiv.clientWidth,
+            },
+            yaxis: {
+                title: "Cluster",
+                automargin: true,
+                autorange: "reversed",
+            },
+            height: 60 * clusters.length + 100,
+            margin: { t: 40, b: 80, l: 80, r: 40 },
+        };
+
+        Plotly.newPlot(clusterGeneDotDiv, [trace], layout, {
+            responsive: true,
+            useResizeHandler: true,
+            displayModeBar: false,
+        });
+
+        observeResize(clusterGeneDotDiv, () =>
+            Plotly.Plots.resize(clusterGeneDotDiv),
+        );
+
+        window.addEventListener("resize", () => {
+            Plotly.Plots.resize(clusterGeneDotDiv);
         });
     }
 
@@ -991,9 +1207,18 @@
                             <div bind:this={umapDiv}></div>
                             <div bind:this={violinDiv}></div>
                         {:else if g === "Cluster"}
+                            <div>Count Distribution</div>
                             <div
                                 bind:this={donutDiv}
                                 class="w-full max-w-full"
+                            ></div>
+                            <div
+                                bind:this={clusterGeneExpressionDiv}
+                                class="w-full h-full"
+                            ></div>
+                            <div
+                                bind:this={clusterGeneDotDiv}
+                                class="w-full h-full"
                             ></div>
                         {:else if g === "Log" && allLog}
                             <div class="table-wrap">
