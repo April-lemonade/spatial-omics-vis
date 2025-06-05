@@ -215,6 +215,23 @@
                 cluster: point.data.name.replace(/^cluster\s*/i, ""),
             };
 
+            Plotly.relayout(spatialDiv, {
+                annotations: [
+                    {
+                        x: point.x,
+                        y: point.y,
+                        text: `${barcode}`,
+                        showarrow: true,
+                        arrowhead: 1,
+                        ax: 0,
+                        ay: -40,
+                        bgcolor: "white",
+                        bordercolor: "",
+                        borderwidth: 1,
+                    },
+                ],
+            });
+
             dispatch("spotClick", {
                 info: clickedInfo,
                 lassoSelected: lassoSelected,
@@ -238,7 +255,10 @@
                     );
                 });
 
-                Plotly.relayout(plotInstance, { dragmode: false });
+                Plotly.relayout(plotInstance, {
+                    dragmode: false,
+                    annotations: [],
+                });
 
                 const lassoPaths = document.querySelectorAll(
                     ".selectionlayer path",

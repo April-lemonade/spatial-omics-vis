@@ -120,6 +120,7 @@
         // console.log(detail);
         // console.log("选中了一个 spot:", info.barcode, info);
         clickedInfo = detail.info;
+        clickedInfo.expression = null
         lassoSelected = detail.lassoSelected;
         console.log(clickedInfo);
     }

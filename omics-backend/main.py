@@ -495,7 +495,7 @@ def get_plot_data(slice_id: str = Query(...)):
     return traces
 
 
-@app.get("/expression/{barcode}")
+@app.get("/expression")
 def get_expression(barcode: str):
     global adata
     adata_local = adata.copy()

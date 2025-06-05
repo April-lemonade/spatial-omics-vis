@@ -18,9 +18,11 @@
     let selectedCluster = null; // 新选的 cluster
     let log;
     let expandedIndex = null;
+    let expression = null;
+    let expressionBarDiv = null;
 
     $: if (clickedInfo) {
-        group = "BasicInfo";
+        // group = "BasicInfo";
         clusterEdit = false;
         selectedCluster = clickedInfo.cluster;
     }
@@ -32,8 +34,61 @@
         log = await res.json();
     }
 
+    function drawExpressionBar() {
+        const genes = clickedInfo.expression.map(([g]) => g);
+        const values = clickedInfo.expression.map(([, v]) => v);
+    }
+
+    async function fetchExpression(barcode) {
+        const res = await fetch(`${baseApi}/expression?barcode=${barcode}`);
+        const expression = await res.json();
+        clickedInfo.expression = Object.entries(expression)
+            .filter(([, v]) => v > 0)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 50);
+
+        const genes = clickedInfo.expression.map(([g]) => g);
+        const values = clickedInfo.expression.map(([, v]) => v);
+        const data = [
+            {
+                type: "bar",
+                x: values.reverse(),
+                y: genes.reverse(),
+                orientation: "h",
+                marker: {
+                    color: "rgba(58, 71, 80, 0.6)",
+                    line: {
+                        color: "rgba(58, 71, 80, 1.0)",
+                        width: 1,
+                    },
+                },
+            },
+        ];
+
+        const layout = {
+            title: "Gene Expression",
+            height: 600,
+            margin: { l: 60, r: 30, t: 30, b: 30 },
+        };
+
+        Plotly.newPlot(expressionBarDiv, data, layout, {
+            responsive: true,
+            displayModeBar: false,
+            useResizeHandler: true,
+            scrollZoom: true,
+        });
+    }
+
     $: if (clickedInfo && group === "ChangeLog") {
         fetchLog(clickedInfo.barcode);
+    }
+
+    $: if (
+        clickedInfo &&
+        group === "GeneExpression" &&
+        !clickedInfo.expression
+    ) {
+        fetchExpression(clickedInfo.barcode);
     }
 
     function changeCluster(barcode, value, comment) {
@@ -51,7 +106,7 @@
 <Tabs
     bind:value={group}
     onValueChange={(e) => (group = e.value)}
-    class="w-full overflow-x-auto"
+    class="w-full overflow-x-auto h-full"
 >
     {#snippet list()}
         <Tabs.Control value="BasicInfo">Basic</Tabs.Control>
@@ -153,8 +208,9 @@
                 {/if}
             {/each}
         </Tabs.Panel>
-        <Tabs.Panel value="GeneExpression">
-            {#if clickedInfo && clickedInfo.expression}
+        <Tabs.Panel value="GeneExpression" class="h-full flex-grow">
+            <div bind:this={expressionBarDiv} class="w-full h-full"></div>
+            <!-- {#if clickedInfo && clickedInfo.expression}
                 <ul class="list-disc list-inside">
                     {#each Object.entries(clickedInfo.expression)
                         .filter(([_, v]) => v !== 0)
@@ -164,7 +220,7 @@
                         </li>
                     {/each}
                 </ul>
-            {/if}
+            {/if} -->
         </Tabs.Panel>
         <Tabs.Panel value="ChangeLog">
             {#if log}
