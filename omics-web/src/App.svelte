@@ -135,10 +135,10 @@
     function handleSpotClick(detail) {
         // console.log(detail);
         // console.log("选中了一个 spot:", info.barcode, info);
+        if (clickedInfo) clickedInfo.expression = null;
         clickedInfo = detail.info;
-        clickedInfo.expression = null;
         lassoSelected = detail.lassoSelected;
-        console.log(clickedInfo);
+        console.log(lassoSelected);
     }
 
     async function handleClusterUpdate(info) {
@@ -314,7 +314,9 @@
 
 <div class="grid h-screen grid-rows-[auto_1fr_auto] gap-y-2 max-h-screen">
     <!-- Header -->
-    <header class="text-xl p-3 bg-gray-200">空转数据可视化demo</header>
+    <header class="text-xl p-3 bg-gray-200">
+        Interactive Visual Analytics Platform for Spatial Transcriptomics
+    </header>
     <!-- Grid Column -->
     <div
         class="flex grid-cols-1 md:grid-cols-[17%_50%_32%] px-1 gap-x-1 h-full overflow-hidden max-h-full"
@@ -489,7 +491,7 @@
                             }}
                         ></Lassomode>
                     </div>
-                {:else if clickedInfo}
+                {:else if clickedInfo?.info}
                     <!-- {#if clickedInfo} -->
                     <SpotInspection
                         {clickedInfo}
@@ -498,7 +500,7 @@
                         {currentSlice}
                         on:clusterUpdate={(e) => handleClusterUpdate(e.detail)}
                     ></SpotInspection>
-                {:else if spatialInfo}
+                {:else if spatialInfo || (!clickedInfo?.info && !lassoSelected)}
                     <Overview
                         class="max-h-full h-full"
                         {spotMetricsData}
