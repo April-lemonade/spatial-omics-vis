@@ -138,7 +138,8 @@
         if (clickedInfo) clickedInfo.expression = null;
         clickedInfo = detail.info;
         lassoSelected = detail.lassoSelected;
-        console.log(lassoSelected);
+        // console.log(lassoSelected);
+        console.log(clickedInfo);
     }
 
     async function handleClusterUpdate(info) {
@@ -491,7 +492,7 @@
                             }}
                         ></Lassomode>
                     </div>
-                {:else if clickedInfo?.info}
+                {:else if clickedInfo}
                     <!-- {#if clickedInfo} -->
                     <SpotInspection
                         {clickedInfo}
