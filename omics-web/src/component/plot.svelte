@@ -6,7 +6,8 @@
     let spatialDiv;
     let clickedInfo;
     export let spatialData;
-    export let imageUrl;
+    export let image;
+    // export let imageUrl;
     export let clusterColorScale;
     export let hoveredBarcode;
     export let lassoHover;
@@ -17,46 +18,172 @@
     let selectedCluster = null;
     let prevSpatialData;
     let comment = "";
-    let image;
+    // let image;
     const dispatch = createEventDispatcher();
     let resizeObserver;
     let selectedBarcodes = [];
     let prevSelectedBarcodes = [];
     let plotInstance = null;
+    let previewUrl = "";
+    let annotationVisible = false;
+    let annotationText = "";
+    let annotationPos = {};
+    let annotationColor = "";
+    let previewBox, previewImg, previewOverlay, previewCircle;
+    let lastSX = 0,
+        lastSY = 0,
+        lastSW = 0,
+        lastSH = 0;
+    let plotInitialized = false;
+    let imageReady = false;
+    let blob;
+
+    function updatePreviewCircle(p) {
+        if (
+            !previewImg ||
+            !previewCircle ||
+            !image ||
+            !plotInstance ||
+            !previewUrl
+        )
+            return;
+
+        tick().then(() => {
+            const displayWidth = previewImg.clientWidth;
+            const displayHeight = previewImg.clientHeight;
+
+            const imageObj = plotInstance.layout.images?.[0];
+            if (!imageObj) return;
+
+            // 原图大小
+            const imgW = image.width;
+            const imgH = image.height;
+
+            const sizex = imageObj.sizex ?? 1;
+            const sizey = imageObj.sizey ?? 1;
+            const x0Image = imageObj.x;
+            const y0Image = imageObj.y;
+
+            // 当前点在原图的像素坐标
+            const relX = (p.x - x0Image) * (imgW / sizex);
+            const relY = (p.y - y0Image) * (imgH / sizey);
+            const flippedY = imgH - relY;
+
+            // === 关键部分 ===
+            // 你需要记住上次框选区域的 sx, sy, sw, sh，才能做映射
+            const canvas = new Image();
+            canvas.src = previewUrl;
+
+            canvas.onload = () => {
+                // 拿到裁剪的尺寸
+                const sx = lastSX;
+                const sy = lastSY;
+                const sw = lastSW;
+                const sh = lastSH;
+
+                // 将原图上的点位置转换到裁剪图上的相对位置
+                const clippedX = (relX - sx) / sw;
+                const clippedY = (relY - sy) / sh;
+
+                // clamp 限制在 0-1 区间
+                const clampedX = Math.max(0, Math.min(1, clippedX));
+                const clampedY = Math.max(0, Math.min(1, clippedY));
+
+                const cx = clampedX * displayWidth;
+                const cy = clampedY * displayHeight;
+
+                previewOverlay.setAttribute("width", displayWidth);
+                previewOverlay.setAttribute("height", displayHeight);
+                previewCircle.setAttribute("cx", cx);
+                previewCircle.setAttribute("cy", cy);
+            };
+        });
+    }
+
+    $: if (spatialData && imageReady && !plotInitialized) {
+        drawPlot();
+        plotInitialized = true;
+    }
+
+    function tryDrawPlot() {
+        if (spatialData && imageReady) {
+            drawPlot();
+            plotInitialized = true;
+        }
+    }
 
     // 图像加载后才可绘制图层背景
     async function loadImage(url) {
         return new Promise((resolve) => {
             const img = new Image();
+            img.crossOrigin = "anonymous";
             img.src = url;
             img.onload = () => resolve(img);
         });
     }
 
+    // let prevSpatialData;
+    let prevImage;
+    // let plotInitialized = false;
+
     $: if (spatialData !== prevSpatialData) {
         prevSpatialData = spatialData;
-        if (spatialData && image) {
-            drawPlot();
-        }
+        plotInitialized = false;
+        tryDrawPlot();
     }
 
-    $: if (spatialData && !plotInstance) {
-        selectedBarcodes = lassoSelected ? prevSelectedBarcodes : [];
-        drawPlot();
+    $: if (image !== prevImage) {
+        prevImage = image;
+        plotInitialized = false;
+        tryDrawPlot();
     }
 
     $: if (hoveredBarcode.from === "umap") {
         drawPlot();
     }
 
+    function toBase64(img) {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        return canvas.toDataURL("image/png");
+    }
+
     async function drawPlot() {
-        image = await loadImage(imageUrl);
+        console.log("Image size:", image.width, image.height);
+        console.log(
+            "Sample spatial point:",
+            spatialData[0].x[0],
+            spatialData[0].y[0],
+        );
+        console.log("image ready?", image.width, image.height);
+        console.log("🎯 drawPlot:", {
+            imageWidth: image.width,
+            imageHeight: image.height,
+            nPoints: spatialData.reduce((acc, t) => acc + t.x.length, 0),
+        });
+        if (plotInstance && spatialDiv) {
+            Plotly.purge(spatialDiv);
+            plotInstance = null;
+        }
+        // image = await loadImage(imageUrl);
+        if (!image) {
+            console.warn("❌ image not loaded yet");
+            return;
+        }
+        const base64 = toBase64(image);
         const layout = {
+            autosize: true,
             title: "Spatial Clusters",
-            xaxis: { visible: false },
+            xaxis: {
+                visible: false,
+                range: [0, image.width], // ✅ 强制更新 x 轴范围
+            },
             yaxis: {
                 visible: false,
-                autorange: "reversed",
+                range: [image.height, 0], // ✅ 强制更新 y 轴范围（注意 y 是反向）
                 scaleanchor: "x",
                 scaleratio: 1,
             },
@@ -65,14 +192,16 @@
             legend: { x: 0, y: 0, bgcolor: "rgba(255,255,255,0.6)" },
             images: [
                 {
-                    source: imageUrl,
+                    source: base64,
                     xref: "x",
                     yref: "y",
                     x: 0,
                     y: 0,
                     sizex: image.width,
                     sizey: image.height,
-                    sizing: "stretch",
+                    sizing: "contain",
+                    xanchor: "left",
+                    yanchor: "top",
                     opacity: 0.6,
                     layer: "below",
                 },
@@ -150,6 +279,64 @@
                 lassoSelected = true;
 
                 if (eventData?.points) {
+                    if (eventData.range) {
+                        const {
+                            x: [x0, x1],
+                            y: [y0, y1],
+                        } = eventData.range;
+
+                        const imageObj = plotInstance.layout.images?.[0];
+                        if (!imageObj) {
+                            console.warn("No layout.images found!");
+                            return;
+                        }
+
+                        // Step 1: 图像逻辑空间中左上角
+                        const x0Image = imageObj.x;
+                        const y0Image = imageObj.y;
+
+                        // Step 2: 选择框逻辑边界（Plotly坐标系）
+                        const x0Sel = Math.min(x0, x1);
+                        const x1Sel = Math.max(x0, x1);
+                        const y0Sel = Math.min(y0, y1);
+                        const y1Sel = Math.max(y0, y1);
+
+                        // Step 3: 逻辑坐标到像素坐标缩放比
+                        const scaleX = image.width / (imageObj.sizex ?? 1);
+                        const scaleY = image.height / (imageObj.sizey ?? 1);
+
+                        // Step 4: 转换到图像像素坐标系（Canvas）
+                        const sx = (x0Sel - x0Image) * scaleX;
+                        const sw = (x1Sel - x0Image) * scaleX - sx;
+
+                        const sy = (y0Sel - y0Image) * scaleY;
+                        const sh = (y1Sel - y0Image) * scaleY - sy;
+
+                        lastSX = sx;
+                        lastSY = sy;
+                        lastSW = sw;
+                        lastSH = sh;
+
+                        const sizex = imageObj.sizex ?? 1;
+                        console.log("eventData.range:", eventData.range);
+                        console.log("canvas draw params:", { sx, sy, sw, sh });
+                        console.log(
+                            "image dimensions",
+                            image.width,
+                            image.height,
+                        );
+
+                        // 创建 canvas 并画图
+                        const canvas = document.createElement("canvas");
+                        canvas.width = sw;
+                        canvas.height = sh;
+                        const ctx = canvas.getContext("2d");
+                        ctx.drawImage(image, sx, sy, sw, sh, 0, 0, sw, sh);
+
+                        previewUrl = canvas.toDataURL();
+                        blob = base64ToBlob(previewUrl);
+                    }
+
                     const barcodes = eventData.points.map(
                         (pt) => pt.customdata,
                     );
@@ -168,9 +355,31 @@
                         );
                     });
 
+                    setTimeout(() => {
+                        document
+                            .querySelectorAll(".selectionlayer path")
+                            .forEach((el) => {
+                                el.setAttribute(
+                                    "style",
+                                    el
+                                        .getAttribute("style")
+                                        ?.replace(
+                                            /pointer-events:\s*[^;]+;?/g,
+                                            "",
+                                        )
+                                        ?.replace(/cursor:\s*[^;]+;?/g, "") ??
+                                        "",
+                                );
+
+                                el.style.pointerEvents = "none";
+                                el.style.cursor = "default";
+                            });
+                    }, 0);
+
                     dispatch("spotClick", {
                         info: barcodes,
-                        lassoSelected: lassoSelected,
+                        lassoSelected: true,
+                        previewUrl: blob,
                     });
                 }
             })();
@@ -228,6 +437,7 @@
                         bgcolor: "white",
                         bordercolor: "",
                         borderwidth: 1,
+                        layer: "above",
                     },
                 ],
             });
@@ -238,11 +448,39 @@
             });
         });
 
+        function approxEqual(a, b, tol = 1e-2) {
+            return Math.abs(a - b) < tol;
+        }
+
         plotInstance.on("plotly_relayout", (eventData) => {
+            console.log("plotly_relayout triggered:", eventData);
+            // const xRange = eventData["xaxis.range"];
+            // const yRange = eventData["yaxis.range"];
+
+            // const x0 = eventData["xaxis.range[0]"];
+            // const x1 = eventData["xaxis.range[1]"];
+            // const y0 = eventData["yaxis.range[0]"];
+            // const y1 = eventData["yaxis.range[1]"];
+
+            function approxEqual(a, b, tol = 1e-2) {
+                return Math.abs(a - b) < tol;
+            }
+
+            const xRange = eventData["xaxis.range"] || [
+                eventData["xaxis.range[0]"],
+                eventData["xaxis.range[1]"],
+            ];
+            const yRange = eventData["yaxis.range"] || [
+                eventData["yaxis.range[0]"],
+                eventData["yaxis.range[1]"],
+            ];
+
             if (
-                eventData["xaxis.autorange"] === true &&
-                eventData["yaxis.autorange"] === true
+                eventData["yaxis.range"] &&
+                eventData["yaxis.range"][1] === 0 &&
+                eventData["yaxis.range"][0] === image.height
             ) {
+                console.log("1111");
                 plotInstance.data.forEach((_, i) => {
                     Plotly.restyle(
                         plotInstance,
@@ -259,6 +497,9 @@
                     dragmode: false,
                     annotations: [],
                 });
+                annotationVisible = false;
+                annotationText = "";
+                annotationPos = {};
 
                 const lassoPaths = document.querySelectorAll(
                     ".selectionlayer path",
@@ -273,6 +514,8 @@
                 lassoPaths.forEach((path) => path.remove());
                 lassoCircles.forEach((circle) => circle.remove());
                 lassoRects.forEach((rect) => rect.remove());
+
+                previewUrl = "";
 
                 clickedInfo = null;
                 lassoSelected = false;
@@ -410,18 +653,30 @@
                         arrowhead: 1,
                         ax: 0,
                         ay: -40,
-                        bgcolor: "white",
+                        bgcolor: clusterColorScale(lassoHover.newCluster),
                         bordercolor: "",
                         borderwidth: 1,
+                        layer: "above",
                     },
                 ],
             });
+            updatePreviewCircle(p);
         } else {
             Plotly.relayout(spatialDiv, {
                 annotations: [],
             });
         }
         // const p = spatialData.
+    }
+
+    $: if (image) {
+        if (image.complete) {
+            imageReady = true;
+        } else {
+            image.onload = () => {
+                imageReady = true;
+            };
+        }
     }
 
     onMount(() => {
@@ -438,6 +693,49 @@
             resizeObserver.unobserve(spatialDiv);
         }
     });
+
+    function base64ToBlob(base64Data, contentType = "image/png") {
+        const byteCharacters = atob(base64Data.split(",")[1]);
+        const byteNumbers = new Array(byteCharacters.length)
+            .fill()
+            .map((_, i) => byteCharacters.charCodeAt(i));
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: contentType });
+    }
 </script>
 
-<div class="h-full" bind:this={spatialDiv}></div>
+<div class="relative w-full h-full">
+    <div class="h-full" bind:this={spatialDiv}></div>
+
+    {#if previewUrl}
+        <div
+            class="absolute top-2 left-2 z-10 bg-white p-1 border border-gray-300 max-w-[300px] max-h-[300px] overflow-hidden"
+            bind:this={previewBox}
+        >
+            <img
+                src={previewUrl}
+                alt="Preview"
+                class="max-w-full max-h-full object-contain block"
+                bind:this={previewImg}
+            />
+
+            <svg
+                class="absolute top-0 left-0 pointer-events-none"
+                xmlns="http://www.w3.org/2000/svg"
+                style="width: 100%; height: 100%;"
+                bind:this={previewOverlay}
+            >
+                <circle
+                    r="6"
+                    fill="none"
+                    stroke="red"
+                    stroke-width="2"
+                    bind:this={previewCircle}
+                />
+            </svg>
+        </div>
+    {/if}
+</div>
+
+<style>
+</style>

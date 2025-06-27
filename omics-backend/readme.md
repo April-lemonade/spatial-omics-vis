@@ -53,6 +53,6 @@ DB_NAME=YOUR_DB_NAME
 
 ### 🚀 运行 main.py
 ```bash
-fastapi dev main.py
+uvicorn main:app --host 0.0.0.0 --port 3538 --reload
 ```
 接口文档：http://localhost:8000/docs

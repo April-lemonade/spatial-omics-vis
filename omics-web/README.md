@@ -17,5 +17,8 @@ npm install
 ```bash
 npm run dev
 ```
+```bash
+npm run dev -- --host 0.0.0.0
+```
 
 默认会在 http://localhost:5173 打开开发服务器。

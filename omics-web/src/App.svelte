@@ -11,10 +11,11 @@
     // import { RoomEnvironment } from "three/esxamples/jsm/Addons.js";
     import { ProgressRing } from "@skeletonlabs/skeleton-svelte";
     import Lassomode from "./component/lassomode.svelte";
+    import { load } from "three/examples/jsm/libs/opentype.module.js";
 
-    const baseApi = "http://localhost:8000";
+    const baseApi = "/api";
     let imageUrl;
-    const clusteringMethods = ["mclust"];
+    const clusteringMethods = ["GraphST", "SEDR", "SpaGCN"];
 
     let currentMethod = clusteringMethods[0];
     let spatialDiv, heatmapDiv;
@@ -25,7 +26,7 @@
 
     let availableClusters;
 
-    let allSlices, currentSlice;
+    let allSlices, currentSlice, prevSlice;
     let ncountSpatialData, spotMetricsData;
     let clusterColorScale;
     let hvg;
@@ -41,6 +42,25 @@
     let lassoHover;
     let clusterGeneExpression;
     let clusterGeneDot;
+    let image;
+    let loading = true;
+    let previewUrl = "";
+
+    const imageCache = new Map();
+
+    async function loadImage(url) {
+        if (imageCache.has(url)) return imageCache.get(url);
+
+        const img = await new Promise((resolve) => {
+            const newImg = new Image();
+            newImg.crossOrigin = "anonymous";
+            newImg.src = url;
+            newImg.onload = () => resolve(newImg);
+        });
+
+        imageCache.set(url, img);
+        return img;
+    }
 
     async function fecthUmapData() {
         const response = await fetch(
@@ -54,13 +74,17 @@
         // 先获取所有的切片 ID
         const slicesRes = await fetch(baseApi + "/allslices");
         allSlices = await slicesRes.json();
-        currentSlice = allSlices[0];
+        if (!currentSlice) {
+            currentSlice = allSlices[0];
+        }
 
         imageUrl = `${baseApi}/images/${currentSlice}/tissue_hires_image.png`;
 
-        const image = new Image();
-        image.src = imageUrl;
-        await new Promise((resolve) => (image.onload = resolve));
+        // const image = new Image();
+        // image.src = imageUrl;
+        image = await loadImage(imageUrl); // ✅ 缓存加载
+
+        // await new Promise((resolve) => (image.onload = resolve));
 
         // 用当前切片 ID 获取 plot-data 和 slice-info
         const [
@@ -97,6 +121,7 @@
         }
 
         return {
+            image,
             plotData,
             sliceInfo,
             ncountData,
@@ -138,6 +163,7 @@
         if (clickedInfo) clickedInfo.expression = null;
         clickedInfo = detail.info;
         lassoSelected = detail.lassoSelected;
+        previewUrl = detail.previewUrl || "";
         // console.log(lassoSelected);
         console.log(clickedInfo);
     }
@@ -202,6 +228,7 @@
             body: JSON.stringify({
                 slice_id: currentSlice,
                 barcode: clickedInfo,
+                method: currentMethod,
             }),
         });
 
@@ -220,7 +247,11 @@
     }
 
     async function refreshSpatialState() {
+        loading = true;
+        spatialData = [];
+        imageUrl = "";
         const {
+            image: loadedImage,
             ncountData,
             plotData,
             sliceInfo,
@@ -230,6 +261,12 @@
             clusterGeneDotData,
             cellChatData,
         } = await fetchSpatial();
+
+        imageUrl = `${baseApi}/images/${currentSlice}/tissue_hires_image.png`;
+
+        image = loadedImage;
+
+        // await new Promise((resolve) => (image.onload = resolve));
 
         spatialData = plotData;
         spatialInfo = sliceInfo;
@@ -244,6 +281,7 @@
         cellChat = JSON.parse(JSON.stringify(cellChatData)); // 或者结构复制
 
         updateClusterMeta(plotData);
+        loading = false;
     }
 
     function updateClusterMeta(plotData) {
@@ -298,9 +336,23 @@
         });
         await refreshSpatialState();
     });
+
+    $: if (currentSlice !== prevSlice) {
+        if (prevSlice) {
+            const response = fetch(
+                baseApi + `/changeSlice?sliceid=${currentSlice}`,
+            );
+        }
+
+        console.log(currentSlice);
+        spatialData = [];
+        imageUrl = "";
+        if (prevSlice !== undefined) refreshSpatialState();
+        prevSlice = currentSlice;
+    }
 </script>
 
-{#if !spatialData || !cellChat}
+{#if !spatialData || spatialData === [] || loading}
     <div
         class="fixed inset-0 z-50 flex justify-center items-center bg-white/80"
     >
@@ -369,7 +421,7 @@
                         class="flex-1"
                         bind:value={n_clusters}
                         min="3"
-                        max="10"
+                        max="25"
                         step="1"
                     />
                     <span class="w-10 text-right text-sm text-gray-600"
@@ -433,6 +485,7 @@
             <Plot
                 {spatialData}
                 {imageUrl}
+                {image}
                 {clusterColorScale}
                 {lassoSelected}
                 {hoveredBarcode}
@@ -484,6 +537,9 @@
                             {clickedInfo}
                             {baseApi}
                             {currentSlice}
+                            {clusterColorScale}
+                            {previewUrl}
+                            initCurrentMethod={currentMethod}
                             on:acceptRecluster={(e) =>
                                 handleClusterUpdate(e.detail)}
                             on:lassoHover={(e) => {

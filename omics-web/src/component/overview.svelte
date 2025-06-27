@@ -1167,8 +1167,8 @@
         });
     }
 
-    onMount(async () => {
-        currentCluster = availableClusters[0];
+    onMount(() => {
+        if (availableClusters) currentCluster = availableClusters[0];
     });
 </script>
 
